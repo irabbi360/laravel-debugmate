@@ -101,7 +101,7 @@ class ErrorTracker
     {
         try {
             dispatch(new ReportErrorJob($errorData))
-                ->onQueue($this->config['queue'] ?? 'default');
+                ->onQueue('default');
         } catch (\Exception $e) {
             Log::error('Failed to dispatch error reporting job', [
                 'error' => $e->getMessage(),

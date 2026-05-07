@@ -143,7 +143,7 @@ class PerformanceMonitor
     {
         try {
             dispatch(new ReportMetricJob($metricData))
-                ->onQueue($this->config['queue'] ?? 'default');
+                ->onQueue( 'default');
         } catch (\Exception $e) {
             Log::error('Failed to dispatch metric reporting job', [
                 'error' => $e->getMessage(),

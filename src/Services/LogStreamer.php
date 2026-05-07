@@ -254,7 +254,7 @@ class LogStreamer
     {
         try {
             dispatch(new ReportLogJob($logData))
-                ->onQueue($this->config['queue'] ?? 'default');
+                ->onQueue('default');
         } catch (\Exception $e) {
             Log::error('Failed to dispatch log reporting job', [
                 'error' => $e->getMessage(),

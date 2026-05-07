@@ -114,8 +114,7 @@ class ApiClient
 
         try {
             $payload = array_merge($data, [
-                'debugmate_key' => $this->debugmateKey,
-                'timestamp' => now()->toIso8601String(),
+                'timestamp' => now()->format('Y-m-d\TH:i:s\Z'),
                 'environment' => config('app.env', 'production'),
             ]);
 
@@ -154,6 +153,7 @@ class ApiClient
             'Content-Type' => 'application/json',
             'Accept' => 'application/json',
             'User-Agent' => 'DebugMate-SDK/2.0',
+            'X-DebugMate-Key' => $this->debugmateKey,
         ];
     }
 }
