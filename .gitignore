@@ -1,0 +1,51 @@
+# Composer Related
+composer.lock
+/vendor
+
+# Frontend Assets
+/node_modules
+
+# Logs
+npm-debug.log
+yarn-error.log
+
+# Caches
+.phpunit.cache
+.phpunit.result.cache
+/build
+
+# IDE Helper
+_ide_helper.php
+_ide_helper_models.php
+.phpstorm.meta.php
+
+# Editors
+/.idea
+/.fleet
+/.vscode
+
+# Misc
+phpunit.xml
+phpstan.neon
+testbench.yaml
+/docs
+/coverage
+.DS_Store
+.env
+.env.backup
+.env.local
+.env.*.local
+Homestead.yaml
+Homestead.json
+/.vagrant
+node_modules/
+package-lock.json
+yarn.lock
+
+# Ignore all Markdown files
+*.md
+
+# But keep README.md
+!README.md
+!CHANGELOG.md
+!LICENSE.md
