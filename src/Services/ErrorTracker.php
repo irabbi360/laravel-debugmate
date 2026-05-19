@@ -3,22 +3,31 @@
 namespace Irabbi360\LaravelDebugMate\Services;
 
 use Throwable;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Irabbi360\LaravelDebugMate\Jobs\ReportErrorJob;
 
 class ErrorTracker
 {
     protected ApiClient $apiClient;
+    protected StackTraceParser $stackTraceParser;
+    protected ContextCollector $contextCollector;
     protected array $config;
 
-    public function __construct(ApiClient $apiClient, array $config)
-    {
+    public function __construct(
+        ApiClient $apiClient,
+        StackTraceParser $stackTraceParser,
+        ContextCollector $contextCollector,
+        array $config
+    ) {
         $this->apiClient = $apiClient;
+        $this->stackTraceParser = $stackTraceParser;
+        $this->contextCollector = $contextCollector;
         $this->config = $config;
     }
 
     /**
-     * Report an error/exception.
+     * Report an error/exception with complete context.
      */
     public function reportError(Throwable $exception, array $context = [], ?string $traceId = null): void
     {
@@ -36,15 +45,22 @@ class ErrorTracker
 
         $traceId = $traceId ?? $this->generateTraceId();
 
+        // Parse detailed stack frames
+        $frames = $this->stackTraceParser->parseThrowable($exception);
+
+        // Collect complete context information
+        $completedContext = $this->collectCompleteContext($context);
+
         $errorData = [
             'trace_id' => $traceId,
             'error_type' => class_basename($exception),
             'message' => $exception->getMessage(),
-            'stack_trace' => $exception->getTraceAsString(),
+            'stack_trace' => json_encode($this->stackTraceParser->toArray($frames)),
+            'frames' => $this->stackTraceParser->toArray($frames),
             'file' => $exception->getFile(),
             'line' => $exception->getLine(),
             'code' => $exception->getCode(),
-            'context' => array_merge($this->getDefaultContext(), $context),
+            'context' => $completedContext,
             'fingerprint' => $this->generateFingerprint($exception),
         ];
 
@@ -56,18 +72,21 @@ class ErrorTracker
     }
 
     /**
-     * Report a custom error.
+     * Report a custom error with complete context.
      */
     public function reportCustomError(string $type, string $message, array $context = [], array $stackTrace = [], ?string $traceId = null): void
     {
         $traceId = $traceId ?? $this->generateTraceId();
+
+        // Collect complete context information
+        $completedContext = $this->collectCompleteContext($context);
 
         $errorData = [
             'trace_id' => $traceId,
             'error_type' => $type,
             'message' => $message,
             'stack_trace' => !empty($stackTrace) ? json_encode($stackTrace) : null,
-            'context' => array_merge($this->getDefaultContext(), $context),
+            'context' => $completedContext,
             'fingerprint' => md5($type . ':' . $message),
         ];
 
@@ -95,6 +114,22 @@ class ErrorTracker
     }
 
     /**
+     * Collect complete context from the request.
+     */
+    protected function collectCompleteContext(array $additionalContext = []): array
+    {
+        if (!request()) {
+            return $additionalContext;
+        }
+
+        // Get all context data from ContextCollector
+        $collectedContext = $this->contextCollector->collect(request());
+
+        // Merge with additional context provided
+        return array_merge($collectedContext, $additionalContext);
+    }
+
+    /**
      * Dispatch async error reporting job.
      */
     protected function dispatchAsyncReport(array $errorData): void
@@ -112,7 +147,7 @@ class ErrorTracker
     }
 
     /**
-     * Get default context data.
+     * Get default context data (kept for backwards compatibility).
      */
     protected function getDefaultContext(): array
     {

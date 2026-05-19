@@ -3,10 +3,15 @@
 namespace Irabbi360\LaravelDebugMate;
 
 use Illuminate\Support\ServiceProvider;
-use Irabbi360\LaravelDebugMate\Services\ErrorTracker;
-use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
-use Irabbi360\LaravelDebugMate\Services\LogStreamer;
+use Illuminate\Support\Facades\DB;
+use Irabbi360\LaravelDebugMate\Http\Middleware\EnableQueryLogging;
 use Irabbi360\LaravelDebugMate\Services\ApiClient;
+use Irabbi360\LaravelDebugMate\Services\ContextCollector;
+use Irabbi360\LaravelDebugMate\Services\ErrorTracker;
+use Irabbi360\LaravelDebugMate\Services\LogStreamer;
+use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
+use Irabbi360\LaravelDebugMate\Services\ExceptionHandler;
+use Irabbi360\LaravelDebugMate\Services\StackTraceParser;
 
 class DebugMateServiceProvider extends ServiceProvider
 {
@@ -28,9 +33,19 @@ class DebugMateServiceProvider extends ServiceProvider
             );
         });
 
+        $this->app->singleton(StackTraceParser::class, function ($app) {
+            return new StackTraceParser();
+        });
+
+        $this->app->singleton(ContextCollector::class, function ($app) {
+            return new ContextCollector();
+        });
+
         $this->app->singleton(ErrorTracker::class, function ($app) {
             return new ErrorTracker(
                 $app->make(ApiClient::class),
+                $app->make(StackTraceParser::class),
+                $app->make(ContextCollector::class),
                 config('debugmate')
             );
         });
@@ -47,6 +62,15 @@ class DebugMateServiceProvider extends ServiceProvider
                 $app->make(ApiClient::class),
                 config('debugmate')
             );
+        });
+
+        $this->app->singleton(ExceptionHandler::class, function ($app) {
+            return new ExceptionHandler($app->make(ErrorTracker::class));
+        });
+
+        // Bind the 'debugmate' facade accessor to ErrorTracker
+        $this->app->bind('debugmate', function ($app) {
+            return $app->make(ErrorTracker::class);
         });
     }
 
@@ -69,6 +93,9 @@ class DebugMateServiceProvider extends ServiceProvider
         if (!config('debugmate.enabled')) {
             return;
         }
+
+        // Enable query logging immediately for all requests
+        DB::enableQueryLog();
 
         // Register error handler
         $this->registerErrorHandler();
