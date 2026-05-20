@@ -22,18 +22,35 @@ class LogStreamer
      */
     public function streamLog(string $message, string $level, array $context = [], ?string $traceId = null, ?string $source = null): void
     {
-        // Check if we should track this log
-        if (!$this->shouldTrackLog($context)) {
-            return;
+        // Extract exception data if present
+        $stackTrace = null;
+        $exceptionClass = null;
+        $exceptionFile = null;
+        $exceptionLine = null;
+
+        if (isset($context['exception']) && $context['exception'] instanceof \Throwable) {
+            $exception = $context['exception'];
+            $stackTrace = $exception->getTraceAsString();
+            $exceptionClass = get_class($exception);
+            $exceptionFile = $exception->getFile();
+            $exceptionLine = $exception->getLine();
         }
 
+        // Sanitize context - remove non-serializable objects
+        $sanitizedContext = $this->sanitizeForSerialization($context);
+
+        // Track all logs - no filtering
         $logData = [
             'trace_id' => $traceId,
-            'channel' => $context['channel'] ?? 'default',
+            'channel' => $sanitizedContext['channel'] ?? 'default',
             'message' => $message,
             'level' => $level,
             'source' => $source ?? $this->detectSource(),
-            'context' => $this->sanitizeContext($context),
+            'context' => $this->sanitizeContext($sanitizedContext),
+            'stack_trace' => $stackTrace,
+            'exception_class' => $exceptionClass,
+            'file' => $exceptionFile,
+            'line' => $exceptionLine,
         ];
 
         if ($this->config['async_reporting']) {
@@ -202,10 +219,52 @@ class LogStreamer
 
         // Check if channel is in tracked channels
         if (!empty($this->config['log_channels'])) {
-            return in_array($channel, $this->config['log_channels']);
+            $shouldTrack = in_array($channel, $this->config['log_channels']);
+            // Debug logging
+            if (env('APP_DEBUG')) {
+                \Illuminate\Support\Facades\Log::debug('DebugMate: Channel check - channel=' . $channel . ', tracked=' . ($shouldTrack ? 'yes' : 'no') . ', configured=' . json_encode($this->config['log_channels']));
+            }
+            return $shouldTrack;
         }
 
         return true;
+    }
+
+    /**
+     * Sanitize context to remove objects that can't be serialized for queuing.
+     */
+    protected function sanitizeForSerialization(array $context): array
+    {
+        $sanitized = [];
+
+        foreach ($context as $key => $value) {
+            if ($value === null) {
+                $sanitized[$key] = null;
+            } elseif (is_scalar($value)) {
+                // Scalars are always safe
+                $sanitized[$key] = $value;
+            } elseif (is_array($value)) {
+                // Recursively process arrays
+                $sanitized[$key] = $this->sanitizeForSerialization($value);
+            } elseif ($value instanceof \JsonSerializable) {
+                // JsonSerializable objects can be serialized
+                $sanitized[$key] = $value->jsonSerialize();
+            } elseif ($value instanceof \Throwable) {
+                // Convert exception to string representation (can't serialize objects)
+                $sanitized[$key] = [
+                    'class' => get_class($value),
+                    'message' => $value->getMessage(),
+                    'file' => $value->getFile(),
+                    'line' => $value->getLine(),
+                ];
+            } elseif (is_object($value)) {
+                // Skip other objects - they can't be serialized
+                // Skip closures, streams, resources, etc.
+                continue;
+            }
+        }
+
+        return $sanitized;
     }
 
     /**

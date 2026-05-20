@@ -100,7 +100,8 @@ class DebugMateServiceProvider extends ServiceProvider
             return;
         }
 
-        $this->registerErrorHandler();
+        // Only register log listener - it handles both errors and logs
+        // registerErrorHandler();  // DISABLED - errors handled in log listener
         $this->registerLogListener();
         $this->registerPerformanceMonitoring();
     }
@@ -116,21 +117,41 @@ class DebugMateServiceProvider extends ServiceProvider
 
         $errorTracker = $this->app->make(ErrorTracker::class);
 
-        // Listen to application exceptions using event
-        \Event::listen('illuminate.log', function ($level, $message, $context) use ($errorTracker) {
-            // Only track errors and above
-            if (in_array($level, ['error', 'critical', 'alert', 'emergency'])) {
-                if (isset($context['exception']) && $context['exception'] instanceof \Throwable) {
-                    $exception = $context['exception'];
-                    if (!in_array(get_class($exception), config('debugmate.ignore_exceptions', []))) {
-                        $errorTracker->reportError($exception, [
-                            'user_id' => auth()->id() ?? null,
-                            'route' => request()?->path() ?? null,
-                            'method' => request()?->method() ?? null,
-                            'ip' => request()?->ip() ?? null,
-                        ]);
+        // Use modern Log::listen() instead of deprecated illuminate.log event
+        \Log::listen(function ($record) use ($errorTracker) {
+            try {
+                // Prevent infinite recursion - don't process DebugMate's own logs
+                if (isset($record->context['_debugmate_internal'])) {
+                    return;
+                }
+
+                // Extract from LogRecord
+                // Handle both Monolog\LogRecord and older format
+                $level = is_object($record->level) && method_exists($record->level, 'getName')
+                    ? $record->level->getName()
+                    : (string)($record->level ?? 'error');
+
+                $context = $record->context ?? [];
+
+                // Only track errors and above
+                if (in_array($level, ['error', 'critical', 'alert', 'emergency'])) {
+                    // Check if this log contains an exception
+                    if (isset($context['exception']) && $context['exception'] instanceof \Throwable) {
+                        $exception = $context['exception'];
+                        if (!in_array(get_class($exception), config('debugmate.ignore_exceptions', []))) {
+                            $errorTracker->reportError($exception, [
+                                'user_id' => auth()->id() ?? null,
+                                'route' => request()?->path() ?? null,
+                                'method' => request()?->method() ?? null,
+                                'ip' => request()?->ip() ?? null,
+                            ]);
+                        }
                     }
                 }
+            } catch (\Throwable $e) {
+                // Fail silently - don't break the app
+                // Mark as internal to prevent recursion
+                error_log('DebugMate error handler failed: ' . $e->getMessage());
             }
         });
     }
@@ -146,9 +167,51 @@ class DebugMateServiceProvider extends ServiceProvider
 
         $logStreamer = $this->app->make(LogStreamer::class);
 
-        \Log::listen(function ($level, $message, $context) use ($logStreamer) {
-            $logStreamer->streamLog($message, $level, $context);
+        // Laravel's Log::listen() passes a single LogRecord object
+        \Log::listen(function ($record) use ($logStreamer) {
+            try {
+                // Prevent infinite recursion - don't process DebugMate's own logs
+                if (isset($record->context['_debugmate_internal'])) {
+                    return;
+                }
+
+                // Extract data from LogRecord
+                // Handle both Monolog\LogRecord and older format
+                $level = is_object($record->level) && method_exists($record->level, 'getName')
+                    ? $record->level->getName()
+                    : (string)($record->level ?? 'info');
+
+                $message = $record->message ?? '';
+                $context = $record->context ?? [];
+                $channel = $record->channel ?? 'default';
+
+                // Extract additional info if available
+                $source = $this->detectSource();
+                $traceId = $context['trace_id'] ?? null;
+
+                // Stream the log
+                $logStreamer->streamLog($message, $level, array_merge($context, ['channel' => $channel]), $traceId, $source);
+            } catch (\Throwable $e) {
+                // Fail silently - don't break the app if logging fails
+                error_log('DebugMate listener error: ' . $e->getMessage());
+            }
         });
+    }
+
+    /**
+     * Detect source of log (http, queue, cli, test).
+     */
+    private function detectSource(): string
+    {
+        if (app()->runningInConsole()) {
+            return 'cli';
+        }
+
+        if (app()->runningUnitTests()) {
+            return 'test';
+        }
+
+        return 'http';
     }
 
     /**
