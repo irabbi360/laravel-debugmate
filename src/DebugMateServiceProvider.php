@@ -2,15 +2,21 @@
 
 namespace Irabbi360\LaravelDebugMate;
 
-use Illuminate\Support\ServiceProvider;
+use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\ServiceProvider;
+use Irabbi360\LaravelDebugMate\Collectors\CommandCollector;
+use Irabbi360\LaravelDebugMate\Collectors\HttpClientCollector;
+use Irabbi360\LaravelDebugMate\Collectors\JobCollector;
+use Irabbi360\LaravelDebugMate\Collectors\ViewCollector;
 use Irabbi360\LaravelDebugMate\Http\Middleware\EnableQueryLogging;
+use Irabbi360\LaravelDebugMate\Http\Middleware\TrackPerformance;
 use Irabbi360\LaravelDebugMate\Services\ApiClient;
 use Irabbi360\LaravelDebugMate\Services\ContextCollector;
 use Irabbi360\LaravelDebugMate\Services\ErrorTracker;
+use Irabbi360\LaravelDebugMate\Services\ExceptionHandler;
 use Irabbi360\LaravelDebugMate\Services\LogStreamer;
 use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
-use Irabbi360\LaravelDebugMate\Services\ExceptionHandler;
 use Irabbi360\LaravelDebugMate\Services\StackTraceParser;
 
 class DebugMateServiceProvider extends ServiceProvider
@@ -94,16 +100,8 @@ class DebugMateServiceProvider extends ServiceProvider
             return;
         }
 
-        // Enable query logging immediately for all requests
-        DB::enableQueryLog();
-
-        // Register error handler
         $this->registerErrorHandler();
-
-        // Register log listener
         $this->registerLogListener();
-
-        // Register performance monitoring
         $this->registerPerformanceMonitoring();
     }
 
@@ -112,27 +110,29 @@ class DebugMateServiceProvider extends ServiceProvider
      */
     protected function registerErrorHandler(): void
     {
+        if (!config('debugmate.track_errors')) {
+            return;
+        }
+
         $errorTracker = $this->app->make(ErrorTracker::class);
 
         // Listen to application exceptions using event
-        if (config('debugmate.track_errors')) {
-            \Event::listen('illuminate.log', function ($level, $message, $context) use ($errorTracker) {
-                // Only track errors and above
-                if (in_array($level, ['error', 'critical', 'alert', 'emergency'])) {
-                    if (isset($context['exception']) && $context['exception'] instanceof \Throwable) {
-                        $exception = $context['exception'];
-                        if (!in_array(get_class($exception), config('debugmate.ignore_exceptions', []))) {
-                            $errorTracker->reportError($exception, [
-                                'user_id' => auth()->id() ?? null,
-                                'route' => request()?->path() ?? null,
-                                'method' => request()?->method() ?? null,
-                                'ip' => request()?->ip() ?? null,
-                            ]);
-                        }
+        \Event::listen('illuminate.log', function ($level, $message, $context) use ($errorTracker) {
+            // Only track errors and above
+            if (in_array($level, ['error', 'critical', 'alert', 'emergency'])) {
+                if (isset($context['exception']) && $context['exception'] instanceof \Throwable) {
+                    $exception = $context['exception'];
+                    if (!in_array(get_class($exception), config('debugmate.ignore_exceptions', []))) {
+                        $errorTracker->reportError($exception, [
+                            'user_id' => auth()->id() ?? null,
+                            'route' => request()?->path() ?? null,
+                            'method' => request()?->method() ?? null,
+                            'ip' => request()?->ip() ?? null,
+                        ]);
                     }
                 }
-            });
-        }
+            }
+        });
     }
 
     /**
@@ -162,12 +162,45 @@ class DebugMateServiceProvider extends ServiceProvider
 
         $monitor = $this->app->make(PerformanceMonitor::class);
 
-        // Track middleware timing
-        \Event::listen('illuminate.query', function ($query, $bindings, $time) use ($monitor) {
-            if (config('debugmate.track_queries')) {
-                $monitor->recordQuery($query, $time, $bindings);
+
+        // ── DB query tracking ──────────────────────────────────────────────
+        if (config('debugmate.track_queries')) {
+            DB::listen(function ($queryObj) use ($monitor) {
+                $monitor->recordQuery(
+                    sql: $queryObj->sql,
+                    timeMs: $queryObj->time,
+                    bindings: $queryObj->bindings,
+                );
+            });
+        }
+
+        // ── Auto-register collectors ───────────────────────────────────────
+        // These collect spans for commands, jobs, views, and HTTP requests
+        $this->registerCollectors($monitor);
+    }
+
+    /**
+     * Register all data collectors.
+     */
+    protected function registerCollectors(PerformanceMonitor $monitor): void
+    {
+        $collectors = [
+            'commands' => fn() => new CommandCollector($monitor),
+            'jobs' => fn() => new JobCollector($monitor),
+            'views' => fn() => new ViewCollector($monitor),
+            'http_client' => fn() => new HttpClientCollector($monitor),
+        ];
+
+        foreach ($collectors as $name => $factory) {
+            if (config("debugmate.collectors.{$name}", true)) {
+                try {
+                    $collector = $factory();
+                    $collector->register();
+                } catch (\Throwable $e) {
+                    \Log::debug("DebugMate: Failed to register {$name} collector: " . $e->getMessage());
+                }
             }
-        });
+        }
     }
 }
 

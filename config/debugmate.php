@@ -32,17 +32,30 @@ return [
     'track_queries' => env('DEBUGMATE_TRACK_QUERIES', false),
 
     /**
+     * Data collectors configuration
+     * Each collector gathers spans for a specific feature
+     */
+    'collectors' => [
+        'commands' => env('DEBUGMATE_COLLECT_COMMANDS', true),
+        'jobs' => env('DEBUGMATE_COLLECT_JOBS', true),
+        'views' => env('DEBUGMATE_COLLECT_VIEWS', true),
+        'http_client' => env('DEBUGMATE_COLLECT_HTTP_CLIENT', true),
+    ],
+
+    /**
      * Queue configuration for async reporting
      */
     'queue' => env('QUEUE_CONNECTION', 'sync'),
     'async_reporting' => env('DEBUGMATE_ASYNC_REPORTING', true),
 
     /**
-     * Paths to ignore
+     * Paths to ignore from performance tracking
+     * (prevents tracking of DebugMate API calls themselves)
      */
     'ignore_paths' => [
         'health',
         'ping',
+        'api/debugmate/*',  // Ignore DebugMate API endpoints
         'debugmate',
         'debugbar',
     ],
