@@ -80,6 +80,7 @@ class PerformanceMonitor
                 'query_count' => count($this->queries),
                 'slow_query_count' => count($slowQueries),
                 'slow_queries' => $slowQueries,
+                'all_queries' => $this->queries,  // ← Include ALL queries, not just slow ones
                 'spans' => $allSpans['spans'] ?? [],
             ],
         ];
