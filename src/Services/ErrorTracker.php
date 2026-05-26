@@ -6,9 +6,19 @@ use Throwable;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Irabbi360\LaravelDebugMate\Jobs\ReportErrorJob;
+use Irabbi360\LaravelDebugMate\DTO\ErrorDataDTO;
+use Irabbi360\LaravelDebugMate\Concerns\CaptureStackTrace;
+use Irabbi360\LaravelDebugMate\Concerns\CaptureSanitization;
+use Irabbi360\LaravelDebugMate\Concerns\CaptureRequestData;
+use Irabbi360\LaravelDebugMate\Concerns\AsyncDispatch;
 
 class ErrorTracker
 {
+    use CaptureStackTrace;
+    use CaptureSanitization;
+    use CaptureRequestData;
+    use AsyncDispatch;
+
     protected ApiClient $apiClient;
     protected StackTraceParser $stackTraceParser;
     protected ContextCollector $contextCollector;
@@ -27,7 +37,7 @@ class ErrorTracker
     }
 
     /**
-     * Report an error/exception with complete context.
+     * Report an error/exception with complete context using DTO.
      */
     public function reportError(Throwable $exception, array $context = [], ?string $traceId = null): void
     {
@@ -43,31 +53,49 @@ class ErrorTracker
             }
         }
 
-        $traceId = $traceId ?? $this->generateTraceId();
+        $traceId = $traceId ?? \Illuminate\Support\Str::uuid()->toString();
 
-        // Parse detailed stack frames
-        $frames = $this->stackTraceParser->parseThrowable($exception);
+        // Parse detailed stack frames using trait
+        $frames = $this->stackTraceParser->parseThrowable($exception);;
+        $metadata = $this->captureExceptionMetadata($exception);
 
         // Collect complete context information
         $completedContext = $this->collectCompleteContext($context);
 
-        $errorData = [
+        // Create error DTO
+        $errorData = ErrorDataDTO::from([
             'trace_id' => $traceId,
-            'error_type' => class_basename($exception),
-            'message' => $exception->getMessage(),
+            'error_type' => $metadata['type'],
+            'message' => $metadata['message'],
+            'file' => $metadata['file'],
+            'line' => $metadata['line'],
+            'code' => $metadata['code'],
             'stack_trace' => json_encode($this->stackTraceParser->toArray($frames)),
             'frames' => $this->stackTraceParser->toArray($frames),
-            'file' => $exception->getFile(),
-            'line' => $exception->getLine(),
-            'code' => $exception->getCode(),
+            'fingerprint' => $this->generateErrorFingerprint($exception),
             'context' => $completedContext,
-            'fingerprint' => $this->generateFingerprint($exception),
-        ];
+            'source' => $this->detectSource(),
+            'user_id' => auth()->id() ?? null,
+            'url' => request()->url() ?? null,
+            'user_agent' => request()->userAgent() ?? null,
+            'ip_address' => request()->ip() ?? null,
+            'method' => request()->method() ?? null,
+        ]);
 
-        if ($this->config['async_reporting']) {
-            $this->dispatchAsyncReport($errorData);
+        $this->reportFromDTO($errorData);
+    }
+
+    /**
+     * Report from ErrorDataDTO.
+     */
+    public function reportFromDTO(ErrorDataDTO $dto): void
+    {
+        $data = $dto->toArray();
+
+        if ($this->config['async_reporting'] ?? false) {
+            $this->dispatchErrorReport($data);
         } else {
-            $this->apiClient->reportError($errorData);
+            $this->apiClient->reportError($data);
         }
     }
 
@@ -76,25 +104,31 @@ class ErrorTracker
      */
     public function reportCustomError(string $type, string $message, array $context = [], array $stackTrace = [], ?string $traceId = null): void
     {
-        $traceId = $traceId ?? $this->generateTraceId();
+        $traceId = $traceId ?? \Illuminate\Support\Str::uuid()->toString();
 
         // Collect complete context information
         $completedContext = $this->collectCompleteContext($context);
 
-        $errorData = [
+        // Create error DTO
+        $errorData = ErrorDataDTO::from([
             'trace_id' => $traceId,
             'error_type' => $type,
             'message' => $message,
+            'file' => $context['file'] ?? 'unknown',
+            'line' => $context['line'] ?? 0,
+            'code' => $context['code'] ?? 0,
             'stack_trace' => !empty($stackTrace) ? json_encode($stackTrace) : null,
-            'context' => $completedContext,
-            'fingerprint' => md5($type . ':' . $message),
-        ];
+            'frames' => $stackTrace,
+            'context' => $this->sanitizeData($completedContext),
+            'source' => $this->detectSource(),
+            'user_id' => auth()->id() ?? null,
+            'url' => request()->url() ?? null,
+            'user_agent' => request()->userAgent() ?? null,
+            'ip_address' => request()->ip() ?? null,
+            'method' => request()->method() ?? null,
+        ]);
 
-        if ($this->config['async_reporting']) {
-            $this->dispatchAsyncReport($errorData);
-        } else {
-            $this->apiClient->reportError($errorData);
-        }
+        $this->reportFromDTO($errorData);
     }
 
     /**
@@ -134,16 +168,7 @@ class ErrorTracker
      */
     protected function dispatchAsyncReport(array $errorData): void
     {
-        try {
-            dispatch(new ReportErrorJob($errorData))
-                ->onQueue('default');
-        } catch (\Exception $e) {
-            Log::error('Failed to dispatch error reporting job', [
-                'error' => $e->getMessage(),
-            ]);
-            // Fallback to synchronous reporting
-            $this->apiClient->reportError($errorData);
-        }
+        $this->dispatchErrorReport($errorData);
     }
 
     /**
@@ -151,34 +176,28 @@ class ErrorTracker
      */
     protected function getDefaultContext(): array
     {
+        $requestData = $this->captureRequestData();
+
         return array_merge(
             $this->config['context'] ?? [],
-            [
-                'url' => request()->url() ?? null,
-                'method' => request()->method() ?? null,
-                'user_agent' => request()->userAgent() ?? null,
-                'ip_address' => request()->ip() ?? null,
-                'headers' => $this->getSafeHeaders(),
-            ]
+            $requestData,
         );
     }
 
     /**
-     * Get safe headers (filter sensitive data).
+     * Detect the source of the error (http, queue, cli, etc).
      */
-    protected function getSafeHeaders(): array
+    protected function detectSource(): string
     {
-        $headers = request()->headers->all();
-        $sensitiveKeys = ['authorization', 'cookie', 'x-api-token', 'x-csrf-token'];
-
-        $safeHeaders = [];
-        foreach ($headers as $key => $value) {
-            if (!in_array(strtolower($key), $sensitiveKeys)) {
-                $safeHeaders[$key] = is_array($value) ? implode(', ', $value) : $value;
-            }
+        if (app()->runningInConsole()) {
+            return 'cli';
         }
 
-        return $safeHeaders;
+        if (app()->runningUnitTests()) {
+            return 'test';
+        }
+
+        return 'http';
     }
 
     /**
@@ -190,16 +209,11 @@ class ErrorTracker
     }
 
     /**
-     * Generate error fingerprint for grouping.
+     * Generate error fingerprint for grouping (kept for backwards compatibility).
      */
     protected function generateFingerprint(Throwable $exception): string
     {
-        // Create fingerprint from error type, message, and file/line
-        $file = $exception->getFile();
-        $line = $exception->getLine();
-        $type = class_basename($exception);
-
-        return md5($type . ':' . $file . ':' . $line);
+        return $this->generateErrorFingerprint($exception);
     }
 }
 

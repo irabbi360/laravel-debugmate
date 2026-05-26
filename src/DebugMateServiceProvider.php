@@ -5,18 +5,23 @@ namespace Irabbi360\LaravelDebugMate;
 use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\ServiceProvider;
+use Irabbi360\LaravelDebugMate\Collectors\AnalyticsCollector;
 use Irabbi360\LaravelDebugMate\Collectors\CommandCollector;
 use Irabbi360\LaravelDebugMate\Collectors\HttpClientCollector;
 use Irabbi360\LaravelDebugMate\Collectors\JobCollector;
 use Irabbi360\LaravelDebugMate\Collectors\ViewCollector;
 use Irabbi360\LaravelDebugMate\Http\Middleware\EnableQueryLogging;
+use Irabbi360\LaravelDebugMate\Http\Middleware\TrackAnalytics;
 use Irabbi360\LaravelDebugMate\Http\Middleware\TrackPerformance;
 use Irabbi360\LaravelDebugMate\Services\ApiClient;
+use Irabbi360\LaravelDebugMate\Services\BotDetector;
 use Irabbi360\LaravelDebugMate\Services\ContextCollector;
 use Irabbi360\LaravelDebugMate\Services\ErrorTracker;
 use Irabbi360\LaravelDebugMate\Services\ExceptionHandler;
+use Irabbi360\LaravelDebugMate\Services\GeoLocation;
 use Irabbi360\LaravelDebugMate\Services\LogStreamer;
 use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
+use Irabbi360\LaravelDebugMate\Services\RequestAnalytics;
 use Irabbi360\LaravelDebugMate\Services\StackTraceParser;
 
 class DebugMateServiceProvider extends ServiceProvider
@@ -74,6 +79,21 @@ class DebugMateServiceProvider extends ServiceProvider
             return new ExceptionHandler($app->make(ErrorTracker::class));
         });
 
+        $this->app->singleton(BotDetector::class, function ($app) {
+            return new BotDetector(config('debugmate.analytics', []));
+        });
+
+        $this->app->singleton(RequestAnalytics::class, function ($app) {
+            return new RequestAnalytics(
+                $app->make(ApiClient::class),
+                config('debugmate')
+            );
+        });
+
+        $this->app->singleton(GeoLocation::class, function ($app) {
+            return new GeoLocation();
+        });
+
         // Bind the 'debugmate' facade accessor to ErrorTracker
         $this->app->bind('debugmate', function ($app) {
             return $app->make(ErrorTracker::class);
@@ -90,15 +110,13 @@ class DebugMateServiceProvider extends ServiceProvider
             __DIR__.'/../config/debugmate.php' => config_path('debugmate.php'),
         ], 'config');
 
-        // Publish migrations
-        $this->publishes([
-            __DIR__.'/../database/migrations' => database_path('migrations'),
-        ], 'migrations');
-
         // Only load if enabled
         if (!config('debugmate.enabled')) {
             return;
         }
+
+        // Register analytics middleware if enabled
+        $this->registerAnalyticsMiddleware();
 
         // Only register log listener - it handles both errors and logs
         // registerErrorHandler();  // DISABLED - errors handled in log listener
@@ -265,5 +283,21 @@ class DebugMateServiceProvider extends ServiceProvider
             }
         }
     }
-}
 
+    /**
+     * Register analytics middleware.
+     */
+    protected function registerAnalyticsMiddleware(): void
+    {
+        if (!config('debugmate.track_analytics')) {
+            return;
+        }
+
+        try {
+            $kernel = $this->app->make(Kernel::class);
+            $kernel->pushMiddleware(TrackAnalytics::class);
+        } catch (\Throwable $e) {
+            \Log::debug('DebugMate: Failed to register analytics middleware: ' . $e->getMessage());
+        }
+    }
+}

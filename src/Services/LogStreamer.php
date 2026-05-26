@@ -4,9 +4,19 @@ namespace Irabbi360\LaravelDebugMate\Services;
 
 use Illuminate\Support\Facades\Log;
 use Irabbi360\LaravelDebugMate\Jobs\ReportLogJob;
+use Irabbi360\LaravelDebugMate\DTO\LogDataDTO;
+use Irabbi360\LaravelDebugMate\Concerns\CaptureStackTrace;
+use Irabbi360\LaravelDebugMate\Concerns\CaptureSanitization;
+use Irabbi360\LaravelDebugMate\Concerns\CaptureRequestData;
+use Irabbi360\LaravelDebugMate\Concerns\AsyncDispatch;
 
 class LogStreamer
 {
+    use CaptureStackTrace;
+    use CaptureSanitization;
+    use CaptureRequestData;
+    use AsyncDispatch;
+
     protected ApiClient $apiClient;
     protected array $config;
     protected array $logBuffer = [];
@@ -18,7 +28,7 @@ class LogStreamer
     }
 
     /**
-     * Stream a log message.
+     * Stream a log message using DTO.
      */
     public function streamLog(string $message, string $level, array $context = [], ?string $traceId = null, ?string $source = null): void
     {
@@ -39,8 +49,8 @@ class LogStreamer
         // Sanitize context - remove non-serializable objects
         $sanitizedContext = $this->sanitizeForSerialization($context);
 
-        // Track all logs - no filtering
-        $logData = [
+        // Create log DTO
+        $logData = LogDataDTO::from([
             'trace_id' => $traceId,
             'channel' => $sanitizedContext['channel'] ?? 'default',
             'message' => $message,
@@ -51,12 +61,24 @@ class LogStreamer
             'exception_class' => $exceptionClass,
             'file' => $exceptionFile,
             'line' => $exceptionLine,
-        ];
+            'user_id' => auth()->id() ?? null,
+            'url' => request()->url() ?? null,
+        ]);
 
-        if ($this->config['async_reporting']) {
-            $this->dispatchAsyncLog($logData);
+        $this->reportFromDTO($logData);
+    }
+
+    /**
+     * Report from LogDataDTO.
+     */
+    public function reportFromDTO(LogDataDTO $dto): void
+    {
+        $data = $dto->toArray();
+
+        if ($this->config['async_reporting'] ?? false) {
+            $this->dispatchLogReport($data);
         } else {
-            $this->apiClient->reportLog($logData);
+            $this->apiClient->reportLog($data);
         }
     }
 
@@ -221,7 +243,7 @@ class LogStreamer
         if (!empty($this->config['log_channels'])) {
             $shouldTrack = in_array($channel, $this->config['log_channels']);
             // Debug logging
-            if (env('APP_DEBUG')) {
+            if (config('app.debug')) {
                 \Illuminate\Support\Facades\Log::debug('DebugMate: Channel check - channel=' . $channel . ', tracked=' . ($shouldTrack ? 'yes' : 'no') . ', configured=' . json_encode($this->config['log_channels']));
             }
             return $shouldTrack;
@@ -294,7 +316,7 @@ class LogStreamer
     protected function parseLaravelLogLine(string $line): ?array
     {
         // Match Laravel log format: [timestamp] channel.level: message
-        if (preg_match('/\[(.+?)\]\s+(.+?)\.(\w+):\s+(.+)/', $line, $matches)) {
+        if (preg_match('/\[(.+?)]\s+(.+?)\.(\w+):\s+(.+)/', $line, $matches)) {
             return [
                 'timestamp' => $matches[1],
                 'channel' => $matches[2],
@@ -311,16 +333,7 @@ class LogStreamer
      */
     protected function dispatchAsyncLog(array $logData): void
     {
-        try {
-            dispatch(new ReportLogJob($logData))
-                ->onQueue('default');
-        } catch (\Exception $e) {
-            Log::error('Failed to dispatch log reporting job', [
-                'error' => $e->getMessage(),
-            ]);
-            // Fallback to synchronous reporting
-            $this->apiClient->reportLog($logData);
-        }
+        $this->dispatchLogReport($logData);
     }
 
     /**

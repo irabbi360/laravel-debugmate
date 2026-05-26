@@ -29,7 +29,8 @@ return [
     'track_errors' => env('DEBUGMATE_TRACK_ERRORS', true),
     'track_logs' => env('DEBUGMATE_TRACK_LOGS', false),
     'track_performance' => env('DEBUGMATE_TRACK_PERFORMANCE', false),
-    'track_queries' => env('DEBUGMATE_TRACK_QUERIES', false),
+    'track_queries' => env('DEBUGMATE_TRACK_QUERIES', true),
+    'track_analytics' => env('DEBUGMATE_TRACK_ANALYTICS', false),
 
     /**
      * Data collectors configuration
@@ -114,5 +115,24 @@ return [
      * Enable detailed debugging
      */
     'debug' => env('DEBUGMATE_DEBUG', false),
-];
 
+    /**
+     * Request Analytics Configuration
+     * Tracks visitor behavior, page views, sessions, bounce rate, etc.
+     */
+    'analytics' => [
+        'enabled' => env('DEBUGMATE_TRACK_ANALYTICS', false),
+        'send_analytics_to_api' => env('DEBUGMATE_SEND_ANALYTICS_TO_API', true),
+        'anonymize_ips' => env('DEBUGMATE_ANONYMIZE_IPS', true),
+        'bot_filtering' => env('DEBUGMATE_BOT_FILTERING', true),
+        'exclude_bots' => env('DEBUGMATE_EXCLUDE_BOTS', true),
+        'retention_days' => env('DEBUGMATE_ANALYTICS_RETENTION_DAYS', 30),
+        'sample_rate' => env('DEBUGMATE_ANALYTICS_SAMPLE_RATE', 1.0),
+    ],
+
+    /**
+     * Geolocation Configuration
+     * Enable IP geolocation lookups for visitor location tracking
+     */
+    'enable_geolocation' => env('DEBUGMATE_ENABLE_GEOLOCATION', false),
+];

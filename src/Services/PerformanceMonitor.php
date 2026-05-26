@@ -6,9 +6,18 @@ use Illuminate\Support\Facades\Log;
 use Irabbi360\LaravelDebugMate\Jobs\ReportMetricJob;
 use Irabbi360\LaravelDebugMate\Tracing\Span;
 use Irabbi360\LaravelDebugMate\Tracing\Tracer;
+use Irabbi360\LaravelDebugMate\DTO\MetricDataDTO;
+use Irabbi360\LaravelDebugMate\DTO\QueryDataDTO;
+use Irabbi360\LaravelDebugMate\Concerns\CaptureQueryData;
+use Irabbi360\LaravelDebugMate\Concerns\CaptureRequestData;
+use Irabbi360\LaravelDebugMate\Concerns\AsyncDispatch;
 
 class PerformanceMonitor
 {
+    use CaptureQueryData;
+    use CaptureRequestData;
+    use AsyncDispatch;
+
     protected ApiClient $apiClient;
     protected array $config;
     protected Tracer $tracer;
@@ -45,7 +54,7 @@ class PerformanceMonitor
     }
 
     /**
-     * End request and flush ONE payload with all spans.
+     * End request and flush ONE payload with all spans using DTO.
      */
     public function flushRequest(string $endpoint, string $method, int $statusCode): void
     {
@@ -64,33 +73,42 @@ class PerformanceMonitor
 
         $allSpans = $this->tracer->toArray();
 
-        $payload = [
+        // Create metric DTO
+        $metricData = MetricDataDTO::from([
             'trace_id' => $this->tracer->getTraceId(),
-            'trace_flags' => $this->tracer->getTraceFlags(),
-            'is_sampled' => $this->tracer->isSampled(),
             'endpoint' => $endpoint,
             'method' => $method,
             'status_code' => $statusCode,
-            'duration_ms' => round($durationMs, 3),
+            'duration_ms' => $durationMs,
             'memory_usage' => memory_get_peak_usage(true),
             'threshold_exceeded' => $durationMs > $responseThreshold,
             'environment' => config('app.env', 'production'),
+            'query_count' => count($this->queries),
+            'slow_query_count' => count($slowQueries),
+            'slow_queries' => $slowQueries,
+            'all_queries' => $this->queries,
+            'spans' => $allSpans['spans'] ?? [],
             'context' => [
                 'app_name' => config('app.name'),
-                'query_count' => count($this->queries),
-                'slow_query_count' => count($slowQueries),
-                'slow_queries' => $slowQueries,
-                'all_queries' => $this->queries,  // ← Include ALL queries, not just slow ones
-                'spans' => $allSpans['spans'] ?? [],
             ],
-        ];
+        ]);
+
+        $this->reportFromDTO($metricData);
 
         $this->tracer = new Tracer();
         $this->rootSpan = null;
         $this->queries = [];
+    }
+
+    /**
+     * Report from MetricDataDTO.
+     */
+    public function reportFromDTO(MetricDataDTO $dto): void
+    {
+        $data = $dto->toArray();
 
         if ($this->config['send_performance_to_api'] ?? true) {
-            $this->sendPayload($payload);
+            $this->sendPayload($data);
         }
     }
 
@@ -147,7 +165,7 @@ class PerformanceMonitor
     }
 
     /**
-     * Record database query as a span.
+     * Record database query as a span using DTO.
      */
     public function recordQuery(string $sql, float $timeMs, array $bindings = []): void
     {
@@ -155,20 +173,25 @@ class PerformanceMonitor
             return;
         }
 
-        $span = $this->startSpan('db.query', [
-            'db.system' => 'mysql',
-            'db.operation' => $this->parseQueryOperation($sql),
-            'db.statement' => $this->sanitizeQuery($sql),
-            'db.bindings_count' => count($bindings),
+        // Create query DTO
+        $queryDto = QueryDataDTO::from([
+            'sql' => $sql,
+            'time_ms' => $timeMs,
+            'bindings' => $bindings,
+            'bindings_count' => count($bindings),
+            'database' => 'default',
         ]);
 
-        $span->setAttribute('duration_ms', round($timeMs, 3));
+        $span = $this->startSpan('db.query', [
+            'db.system' => 'mysql',
+            'db.operation' => $queryDto->operation,
+            'db.statement' => $queryDto->sql,
+            'db.bindings_count' => $queryDto->bindings_count,
+        ]);
 
-        $this->queries[] = [
-            'sql' => $this->sanitizeQuery($sql),
-            'time_ms' => round($timeMs, 3),
-            'bindings' => count($bindings),
-        ];
+        $span->setAttribute('duration_ms', $queryDto->time_ms);
+
+        $this->queries[] = $queryDto->toArray();
 
         $this->endSpan($span);
     }
@@ -257,7 +280,7 @@ class PerformanceMonitor
 
         if ($async) {
             try {
-                dispatch(new ReportMetricJob($payload))->onQueue('default');
+                $this->dispatchMetricReport($payload);
                 return;
             } catch (\Throwable $e) {
                 Log::error('DebugMate: Failed to dispatch metric job', ['error' => $e->getMessage()]);
@@ -271,21 +294,9 @@ class PerformanceMonitor
         }
     }
 
-    protected function sanitizeQuery(string $query): string
+    protected function getSlowQueryThreshold(): ?float
     {
-        $query = preg_replace('/password\s*=\s*[\'"][^\'"]*[\'"]/', 'password = ***', $query);
-        $query = preg_replace('/token\s*=\s*[\'"][^\'"]*[\'"]/', 'token = ***', $query);
-        $query = preg_replace('/api_key\s*=\s*[\'"][^\'"]*[\'"]/', 'api_key = ***', $query);
-        return $query;
-    }
-
-    protected function parseQueryOperation(string $sql): string
-    {
-        if (preg_match('/^\s*SELECT/i', $sql)) return 'SELECT';
-        if (preg_match('/^\s*INSERT/i', $sql)) return 'INSERT';
-        if (preg_match('/^\s*UPDATE/i', $sql)) return 'UPDATE';
-        if (preg_match('/^\s*DELETE/i', $sql)) return 'DELETE';
-        return 'QUERY';
+        return $this->config['thresholds']['query_time_ms'] ?? 1000;
     }
 }
 

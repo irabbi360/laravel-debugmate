@@ -56,6 +56,14 @@ class ApiClient
     }
 
     /**
+     * Send analytics data to API.
+     */
+    public function reportAnalytics(array $analyticsData): bool
+    {
+        return $this->send('/api/debugmate/analytics', $analyticsData);
+    }
+
+    /**
      * Verify API connection.
      */
     public function verifyConnection(): bool

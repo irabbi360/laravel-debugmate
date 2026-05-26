@@ -9,9 +9,14 @@ use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
 
 /**
  * @method static void reportError(\Throwable $exception, array $context = [])
- * @method static array getPerformanceSummaryx()
+ * @method static array getPerformanceSummary()
+ * @method static void trackPageView(array $pageData)
+ * @method static void trackEvent(string $eventName, array $eventData = [], string $category = null)
+ * @method static string|null getSessionId()
+ * @method static string|null getUserFingerprint()
  *
  * @see \Irabbi360\LaravelDebugMate\Services\ErrorTracker
+ * @see \Irabbi360\LaravelDebugMate\Services\RequestAnalytics
  */
 class DebugMate extends Facade
 {
@@ -81,5 +86,53 @@ class DebugMate extends Facade
     public static function getPerformanceSummary(): array
     {
         return app(PerformanceMonitor::class)->getSummary();
+    }
+
+    // ── Analytics Methods ──────────────────────────────────────────────────────
+
+    /**
+     * Track a page view.
+     *
+     * Usage:
+     *   DebugMate::trackPageView([
+     *       'url' => request()->url(),
+     *       'title' => 'Page Title',
+     *       'load_time_ms' => 1234,
+     *       'status_code' => 200,
+     *   ]);
+     */
+    public static function trackPageView(array $pageData): void
+    {
+        app(\Irabbi360\LaravelDebugMate\Services\RequestAnalytics::class)->trackPageView($pageData);
+    }
+
+    /**
+     * Track a custom event.
+     *
+     * Usage:
+     *   DebugMate::trackEvent('user_signup', [
+     *       'plan' => 'premium',
+     *       'currency' => 'USD',
+     *   ], category: 'conversion');
+     */
+    public static function trackEvent(string $eventName, array $eventData = [], string $category = null): void
+    {
+        app(\Irabbi360\LaravelDebugMate\Services\RequestAnalytics::class)->trackEvent($eventName, $eventData, $category);
+    }
+
+    /**
+     * Get current session ID.
+     */
+    public static function getSessionId(): ?string
+    {
+        return app(\Irabbi360\LaravelDebugMate\Services\RequestAnalytics::class)->getSessionId();
+    }
+
+    /**
+     * Get current user fingerprint.
+     */
+    public static function getUserFingerprint(): ?string
+    {
+        return app(\Irabbi360\LaravelDebugMate\Services\RequestAnalytics::class)->getUserFingerprint();
     }
 }
