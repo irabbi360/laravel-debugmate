@@ -41,6 +41,8 @@ return [
         'jobs' => env('DEBUGMATE_COLLECT_JOBS', true),
         'views' => env('DEBUGMATE_COLLECT_VIEWS', true),
         'http_client' => env('DEBUGMATE_COLLECT_HTTP_CLIENT', true),
+        'queries' => env('DEBUGMATE_COLLECT_QUERIES', true),
+        'livewire' => env('DEBUGMATE_COLLECT_LIVEWIRE', true),
     ],
 
     /**

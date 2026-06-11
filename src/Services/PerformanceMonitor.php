@@ -3,32 +3,35 @@
 namespace Irabbi360\LaravelDebugMate\Services;
 
 use Illuminate\Support\Facades\Log;
-use Irabbi360\LaravelDebugMate\Jobs\ReportMetricJob;
-use Irabbi360\LaravelDebugMate\Tracing\Span;
-use Irabbi360\LaravelDebugMate\Tracing\Tracer;
-use Irabbi360\LaravelDebugMate\DTO\MetricDataDTO;
-use Irabbi360\LaravelDebugMate\DTO\QueryDataDTO;
+use Irabbi360\LaravelDebugMate\Concerns\AsyncDispatch;
 use Irabbi360\LaravelDebugMate\Concerns\CaptureQueryData;
 use Irabbi360\LaravelDebugMate\Concerns\CaptureRequestData;
-use Irabbi360\LaravelDebugMate\Concerns\AsyncDispatch;
+use Irabbi360\LaravelDebugMate\DTO\MetricDataDTO;
+use Irabbi360\LaravelDebugMate\DTO\QueryDataDTO;
+use Irabbi360\LaravelDebugMate\Tracing\Span;
+use Irabbi360\LaravelDebugMate\Tracing\Tracer;
 
 class PerformanceMonitor
 {
+    use AsyncDispatch;
     use CaptureQueryData;
     use CaptureRequestData;
-    use AsyncDispatch;
 
     protected ApiClient $apiClient;
+
     protected array $config;
+
     protected Tracer $tracer;
+
     protected ?Span $rootSpan = null;
+
     protected array $queries = [];
 
     public function __construct(ApiClient $apiClient, array $config)
     {
         $this->apiClient = $apiClient;
         $this->config = $config;
-        $this->tracer = new Tracer();
+        $this->tracer = new Tracer;
     }
 
     /**
@@ -50,7 +53,77 @@ class PerformanceMonitor
         ]);
 
         $this->queries = [];
+
         return $this->tracer->getTraceId();
+    }
+
+    /**
+     * Start tracing a queue job (worker context, no HTTP request).
+     */
+    public function startJob(string $jobName, string $queue = 'default', string $connection = 'default'): string
+    {
+        $this->rootSpan = $this->tracer->startSpan('queue.process', [
+            'job.class' => $jobName,
+            'job.name' => class_basename($jobName),
+            'job.queue' => $queue,
+            'job.connection_name' => $connection,
+        ]);
+
+        $this->queries = [];
+
+        return $this->tracer->getTraceId();
+    }
+
+    /**
+     * Whether an HTTP request or queue job trace is active.
+     */
+    public function hasActiveTrace(): bool
+    {
+        return $this->rootSpan !== null;
+    }
+
+    /**
+     * Flush metrics after a queue job completes in the worker.
+     */
+    public function flushJob(int $statusCode = 200): void
+    {
+        if ($this->rootSpan === null) {
+            return;
+        }
+
+        $jobName = $this->rootSpan->getAttributes()['job.class']
+            ?? $this->rootSpan->getAttributes()['job.name']
+            ?? 'queue.job';
+
+        $this->flushRequest($jobName, 'QUEUE', $statusCode);
+    }
+
+    /**
+     * Start tracing an Artisan command (CLI context).
+     */
+    public function startCommand(string $commandName): string
+    {
+        $this->rootSpan = $this->tracer->startSpan('console.process', [
+            'command.name' => $commandName,
+        ]);
+
+        $this->queries = [];
+
+        return $this->tracer->getTraceId();
+    }
+
+    /**
+     * Flush metrics after an Artisan command completes.
+     */
+    public function flushCommand(int $statusCode = 200): void
+    {
+        if ($this->rootSpan === null) {
+            return;
+        }
+
+        $commandName = $this->rootSpan->getAttributes()['command.name'] ?? 'artisan';
+
+        $this->flushRequest($commandName, 'ARTISAN', $statusCode);
     }
 
     /**
@@ -69,11 +142,15 @@ class PerformanceMonitor
         $durationMs = $this->rootSpan->getDurationMs();
 
         $queryThreshold = $this->config['thresholds']['query_time_ms'] ?? 1000;
-        $slowQueries = array_values(array_filter($this->queries, fn($q) => $q['time_ms'] >= $queryThreshold));
+        $slowQueries = array_values(array_filter($this->queries, fn ($q) => $q['time_ms'] >= $queryThreshold));
 
         $allSpans = $this->tracer->toArray();
+        $spans = $allSpans['spans'] ?? [];
 
-        // Create metric DTO
+        // Separate spans by type for detailed tracking
+        $separatedSpans = $this->separateSpansByType($spans);
+
+        // Create metric DTO with all span types
         $metricData = MetricDataDTO::from([
             'trace_id' => $this->tracer->getTraceId(),
             'endpoint' => $endpoint,
@@ -87,15 +164,27 @@ class PerformanceMonitor
             'slow_query_count' => count($slowQueries),
             'slow_queries' => $slowQueries,
             'all_queries' => $this->queries,
-            'spans' => $allSpans['spans'] ?? [],
+            'spans' => $spans,
+            // Add separated span types
+            'job_spans' => $separatedSpans['job'] ?? [],
+            'command_spans' => $separatedSpans['command'] ?? [],
+            'http_client_spans' => $separatedSpans['http_client'] ?? [],
+            'view_spans' => $separatedSpans['view'] ?? [],
+            'livewire_spans' => $separatedSpans['livewire'] ?? [],
+            'job_count' => count($separatedSpans['job'] ?? []),
+            'command_count' => count($separatedSpans['command'] ?? []),
+            'http_client_count' => count($separatedSpans['http_client'] ?? []),
+            'view_count' => count($separatedSpans['view'] ?? []),
+            'livewire_count' => count($separatedSpans['livewire'] ?? []),
             'context' => [
                 'app_name' => config('app.name'),
             ],
+            'timestamp' => now()->toIso8601String(),
         ]);
 
         $this->reportFromDTO($metricData);
 
-        $this->tracer = new Tracer();
+        $this->tracer = new Tracer;
         $this->rootSpan = null;
         $this->queries = [];
     }
@@ -137,6 +226,7 @@ class PerformanceMonitor
         try {
             $result = $callback($span);
             $span->setStatus(Span::STATUS_OK);
+
             return $result;
         } catch (\Throwable $e) {
             $span->recordException($e);
@@ -159,8 +249,10 @@ class PerformanceMonitor
         $span = $this->tracer->getCurrentSpan();
         if ($span && $span->getName() === $name) {
             $this->endSpan($span);
+
             return $span->getDurationMs();
         }
+
         return 0.0;
     }
 
@@ -169,7 +261,7 @@ class PerformanceMonitor
      */
     public function recordQuery(string $sql, float $timeMs, array $bindings = []): void
     {
-        if (!($this->config['track_queries'] ?? false)) {
+        if (! ($this->config['track_queries'] ?? false)) {
             return;
         }
 
@@ -201,7 +293,7 @@ class PerformanceMonitor
      */
     public function recordMetric(string $name, float $durationMs, array $context = [], ?string $traceId = null): void
     {
-        if (!($this->config['send_performance_to_api'] ?? true)) {
+        if (! ($this->config['send_performance_to_api'] ?? true)) {
             return;
         }
 
@@ -261,14 +353,14 @@ class PerformanceMonitor
     public function getSummary(): array
     {
         $spans = $this->tracer->getSpans();
-        $durations = array_map(fn($s) => $s->getDurationMs(), $spans);
+        $durations = array_map(fn ($s) => $s->getDurationMs(), $spans);
 
         return [
             'trace_id' => $this->tracer->getTraceId(),
             'query_count' => count($this->queries),
             'span_count' => count($spans),
             'total_duration_ms' => $durations ? array_sum($durations) : 0,
-            'spans' => array_map(fn($s) => $s->toArray(), $spans),
+            'spans' => array_map(fn ($s) => $s->toArray(), $spans),
         ];
     }
 
@@ -281,6 +373,7 @@ class PerformanceMonitor
         if ($async) {
             try {
                 $this->dispatchMetricReport($payload);
+
                 return;
             } catch (\Throwable $e) {
                 Log::error('DebugMate: Failed to dispatch metric job', ['error' => $e->getMessage()]);
@@ -298,5 +391,57 @@ class PerformanceMonitor
     {
         return $this->config['thresholds']['query_time_ms'] ?? 1000;
     }
-}
 
+    /**
+     * Separate spans by type for detailed tracking.
+     *
+     * Extracts spans into separate arrays:
+     * - job spans (queue.job)
+     * - command spans (console.command)
+     * - http client spans (http.client.request)
+     * - view spans (view.render)
+     * - livewire spans (livewire.*)
+     */
+    protected function separateSpansByType(array $spans): array
+    {
+        $separated = [
+            'job' => [],
+            'command' => [],
+            'http_client' => [],
+            'view' => [],
+            'livewire' => [],
+        ];
+
+        if (empty($spans)) {
+            return $separated;
+        }
+
+        foreach ($spans as $span) {
+            $spanName = $span['name'] ?? '';
+
+            // Job spans
+            if ($spanName === 'queue.job') {
+                $separated['job'][] = $span;
+            }
+            // Command spans
+            elseif ($spanName === 'console.command') {
+                $separated['command'][] = $span;
+            }
+            // External HTTP client spans
+            elseif ($spanName === 'http.client.request') {
+                $separated['http_client'][] = $span;
+            }
+            // View rendering spans
+            elseif ($spanName === 'view.render') {
+                $separated['view'][] = $span;
+            }
+            // Livewire component spans
+            elseif (strpos($spanName, 'livewire.') === 0) {
+                $separated['livewire'][] = $span;
+            }
+            // Database queries stay in main spans array (handled by all_queries/slow_queries)
+        }
+
+        return $separated;
+    }
+}

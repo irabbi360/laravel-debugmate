@@ -3,12 +3,13 @@
 namespace Irabbi360\LaravelDebugMate;
 
 use Illuminate\Contracts\Http\Kernel;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\ServiceProvider;
 use Irabbi360\LaravelDebugMate\Collectors\AnalyticsCollector;
 use Irabbi360\LaravelDebugMate\Collectors\CommandCollector;
 use Irabbi360\LaravelDebugMate\Collectors\HttpClientCollector;
 use Irabbi360\LaravelDebugMate\Collectors\JobCollector;
+use Irabbi360\LaravelDebugMate\Collectors\LivewireCollector;
+use Irabbi360\LaravelDebugMate\Collectors\QueryCollector;
 use Irabbi360\LaravelDebugMate\Collectors\ViewCollector;
 use Irabbi360\LaravelDebugMate\Http\Middleware\EnableQueryLogging;
 use Irabbi360\LaravelDebugMate\Http\Middleware\TrackAnalytics;
@@ -243,20 +244,8 @@ class DebugMateServiceProvider extends ServiceProvider
 
         $monitor = $this->app->make(PerformanceMonitor::class);
 
-
-        // ── DB query tracking ──────────────────────────────────────────────
-        if (config('debugmate.track_queries')) {
-            DB::listen(function ($queryObj) use ($monitor) {
-                $monitor->recordQuery(
-                    sql: $queryObj->sql,
-                    timeMs: $queryObj->time,
-                    bindings: $queryObj->bindings,
-                );
-            });
-        }
-
         // ── Auto-register collectors ───────────────────────────────────────
-        // These collect spans for commands, jobs, views, and HTTP requests
+        // These collect spans for commands, jobs, views, queries, HTTP requests, and Livewire
         $this->registerCollectors($monitor);
     }
 
@@ -270,6 +259,8 @@ class DebugMateServiceProvider extends ServiceProvider
             'jobs' => fn() => new JobCollector($monitor),
             'views' => fn() => new ViewCollector($monitor),
             'http_client' => fn() => new HttpClientCollector($monitor),
+            'queries' => fn() => new QueryCollector($monitor),
+            'livewire' => fn() => new LivewireCollector($monitor),
         ];
 
         foreach ($collectors as $name => $factory) {

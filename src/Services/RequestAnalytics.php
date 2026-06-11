@@ -62,10 +62,10 @@ class RequestAnalytics
             'city' => $geoInfo['city'],
             'latitude' => $geoInfo['latitude'],
             'longitude' => $geoInfo['longitude'],
-            // Metrics - REAL DATA
-            'page_views' => 1,
+            // Metrics
+            'page_views' => 0,
             'bounce_count' => 0,
-            'pages_visited' => [$this->getCurrentPage()],
+            'pages_visited' => [],
             'session_start_time' => microtime(true),
         ];
 
@@ -77,6 +77,27 @@ class RequestAnalytics
         $this->storeSessionInCache($this->sessionId, $this->sessionData);
 
         return $this->sessionId;
+    }
+
+    /**
+     * Resume an existing analytics session from cache.
+     */
+    public function resumeSession(string $sessionId, array $requestData = []): bool
+    {
+        $cachedSession = $this->getSessionFromCache($sessionId);
+        if ($cachedSession === null) {
+            return false;
+        }
+
+        $this->sessionId = $sessionId;
+        $this->sessionData = $cachedSession;
+        $this->userFingerprint = $cachedSession['user_fingerprint'] ?? null;
+
+        if (isset($requestData['user_id']) && $requestData['user_id']) {
+            $this->sessionData['user_id'] = $requestData['user_id'];
+        }
+
+        return true;
     }
 
     /**
@@ -133,6 +154,7 @@ class RequestAnalytics
             'type' => 'page_view',
             'page_url' => $currentPage,
             'page_title' => $pageData['title'] ?? null,
+            'referrer' => $pageData['referrer'] ?? $this->resolveExternalReferrer($this->sessionData['referrer'] ?? null),
             'load_time_ms' => $pageData['load_time_ms'] ?? null,
             'method' => $pageData['method'] ?? request()->method(),
             'status_code' => $pageData['status_code'] ?? 200,
@@ -170,41 +192,46 @@ class RequestAnalytics
     }
 
     /**
-     * End current session and record metrics using DTO.
+     * Update the current session metrics without ending it.
      */
-    public function endSession(int $statusCode = 200): void
+    public function updateSession(int $statusCode = 200): void
     {
-        if (!$this->sessionId) {
+        if (! $this->sessionId) {
             return;
         }
 
-        // Restore session from cache
         $cachedSession = $this->getSessionFromCache($this->sessionId);
         if ($cachedSession) {
             $this->sessionData = $cachedSession;
         }
 
         $duration = microtime(true) - ($this->sessionData['session_start_time'] ?? microtime(true));
+        $pageViews = (int) ($this->sessionData['page_views'] ?? 0);
+        $bounceCount = ($pageViews <= 1 && $duration < 30) ? 1 : 0;
 
-        // Calculate bounce count
-        // Bounce if only 1 page visited AND session less than 30 seconds
-        $bounce_count = 0;
-        if (($this->sessionData['page_views'] ?? 0) === 1 && $duration < 30) {
-            $bounce_count = 1;
-        }
-
-        // Create analytics DTO
         $analyticsData = AnalyticsDataDTO::from(array_merge($this->sessionData, [
             'type' => 'session',
             'session_duration_seconds' => round($duration),
             'status_code' => $statusCode,
-            'bounce_count' => $bounce_count,
-            'page_views' => $this->sessionData['page_views'] ?? 1,
+            'bounce_count' => $bounceCount,
+            'page_views' => $pageViews,
         ]));
 
         $this->reportFromDTO($analyticsData);
+        $this->sessionData['bounce_count'] = $bounceCount;
+        $this->storeSessionInCache($this->sessionId, $this->sessionData);
+    }
 
-        // Clean up cache
+    /**
+     * End current session and record metrics using DTO.
+     */
+    public function endSession(int $statusCode = 200): void
+    {
+        if (! $this->sessionId) {
+            return;
+        }
+
+        $this->updateSession($statusCode);
         $this->deleteSessionFromCache($this->sessionId);
         $this->sessionId = null;
     }

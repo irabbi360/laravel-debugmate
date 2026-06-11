@@ -8,9 +8,10 @@ class CommandCollector implements CollectorInterface
 {
     protected array $spans = [];
 
-    public function __construct(protected PerformanceMonitor $monitor)
-    {
-    }
+    /** @var array<string, true> Commands started in CLI context (need their own flush) */
+    protected array $cliCommands = [];
+
+    public function __construct(protected PerformanceMonitor $monitor) {}
 
     public function getName(): string
     {
@@ -22,36 +23,63 @@ class CommandCollector implements CollectorInterface
         try {
             \Event::listen('Illuminate\Console\Events\CommandStarting', function ($event) {
                 try {
+                    $commandName = $event->command ?? 'unknown';
+
+                    if ($this->shouldSkipCommand($commandName)) {
+                        return;
+                    }
+
+                    $key = $commandName;
+
+                    if (! $this->monitor->hasActiveTrace()) {
+                        $this->monitor->startCommand($commandName);
+                        $this->cliCommands[$key] = true;
+                    }
+
                     $span = $this->monitor->startSpan('console.command', [
-                        'command.name' => $event->command ?? 'unknown',
+                        'command.name' => $commandName,
                     ]);
-                    $this->spans[$event->command] = $span;
+                    $this->spans[$key] = $span;
                 } catch (\Throwable $e) {
-                    \Log::debug('DebugMate CommandCollector: Error in CommandStarting: ' . $e->getMessage());
+                    \Log::debug('DebugMate CommandCollector: Error in CommandStarting: '.$e->getMessage());
                 }
             });
 
             \Event::listen('Illuminate\Console\Events\CommandFinished', function ($event) {
                 try {
-                    $span = $this->spans[$event->command] ?? null;
-                    if ($span) {
-                        $span->setAttribute('command.exit_code', $event->exitCode ?? 0);
-                        if (($event->exitCode ?? 0) === 0) {
-                            $span->setStatus('OK');
-                        } else {
-                            $span->setStatus('ERROR', "Command exited with code {$event->exitCode}");
-                        }
-                        $this->monitor->endSpan($span);
-                        unset($this->spans[$event->command]);
-                    }
+                    $this->finishCommand($event->command ?? 'unknown', $event->exitCode ?? 0);
                 } catch (\Throwable $e) {
-                    \Log::debug('DebugMate CommandCollector: Error in CommandFinished: ' . $e->getMessage());
+                    \Log::debug('DebugMate CommandCollector: Error in CommandFinished: '.$e->getMessage());
                 }
             });
         } catch (\Throwable $e) {
-            \Log::debug('DebugMate CommandCollector: Error registering listeners: ' . $e->getMessage());
+            \Log::debug('DebugMate CommandCollector: Error registering listeners: '.$e->getMessage());
         }
     }
+
+    protected function finishCommand(string $commandName, int $exitCode): void
+    {
+        $span = $this->spans[$commandName] ?? null;
+
+        if ($span) {
+            $span->setAttribute('command.exit_code', $exitCode);
+            if ($exitCode === 0) {
+                $span->setStatus('OK');
+            } else {
+                $span->setStatus('ERROR', "Command exited with code {$exitCode}");
+            }
+            $this->monitor->endSpan($span);
+            unset($this->spans[$commandName]);
+        }
+
+        if (isset($this->cliCommands[$commandName])) {
+            $this->monitor->flushCommand($exitCode === 0 ? 200 : 500);
+            unset($this->cliCommands[$commandName]);
+        }
+    }
+
+    protected function shouldSkipCommand(string $commandName): bool
+    {
+        return in_array($commandName, ['list', 'help', 'clear-compiled'], true);
+    }
 }
-
-

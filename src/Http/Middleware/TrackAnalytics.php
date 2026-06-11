@@ -4,7 +4,9 @@ namespace Irabbi360\LaravelDebugMate\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cookie;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\Cookie as SymfonyCookie;
 use Irabbi360\LaravelDebugMate\DTO\DeviceDataDTO;
 use Irabbi360\LaravelDebugMate\DTO\GeoLocationDataDTO;
 use Irabbi360\LaravelDebugMate\Services\BotDetector;
@@ -14,8 +16,14 @@ use Symfony\Component\HttpFoundation\Response;
 
 class TrackAnalytics
 {
+    protected const SESSION_COOKIE = 'debugmate_sid';
+
+    protected const SESSION_MINUTES = 30;
+
     protected RequestAnalytics $analytics;
+
     protected BotDetector $botDetector;
+
     protected GeoLocation $geoLocation;
 
     public function __construct(RequestAnalytics $analytics, BotDetector $botDetector, GeoLocation $geoLocation)
@@ -65,7 +73,7 @@ class TrackAnalytics
         $requestData = [
             'user_agent' => $request->userAgent(),
             'ip_address' => $ipAddress,
-            'referrer' => $request->input('referer') ?? $request->header('Referer'),
+            'referrer' => $this->analytics->resolveExternalReferrer($request->headers->get('referer')),
             'accept_language' => $request->header('Accept-Language'),
             'user_id' => auth()->id(),
             // Browser info from DTO
@@ -85,22 +93,28 @@ class TrackAnalytics
             'longitude' => $geoData->longitude,
         ];
 
-        // Start analytics session
-        $sessionId = $this->analytics->startSession($requestData);
+        $existingSessionId = $request->cookie(self::SESSION_COOKIE);
+        if ($existingSessionId && $this->analytics->resumeSession($existingSessionId, $requestData)) {
+            $sessionId = $existingSessionId;
+        } else {
+            $sessionId = $this->analytics->startSession($requestData);
+        }
 
-        // Store in request for later use
         $request->attributes->set('debugmate_session_id', $sessionId);
         $request->attributes->set('debugmate_is_bot', $isBot);
 
-        // Handle the request
         $response = $next($request);
 
-        // Track page view
+        $loadTimeMs = defined('LARAVEL_START')
+            ? (int) round((microtime(true) - LARAVEL_START) * 1000)
+            : null;
+
         try {
             $this->analytics->trackPageView([
-                'url' => $request->url(),
-                'title' => $request->header('X-Page-Title') ?? request()->route()?->getName(),
-                'load_time_ms' => null,
+                'url' => $request->fullUrl(),
+                'title' => $request->header('X-Page-Title') ?? $request->route()?->getName(),
+                'referrer' => $this->analytics->resolveExternalReferrer($request->headers->get('referer')),
+                'load_time_ms' => $loadTimeMs,
                 'status_code' => $response->getStatusCode(),
                 'method' => $request->method(),
             ]);
@@ -108,12 +122,25 @@ class TrackAnalytics
             Log::debug('DebugMate: Failed to track page view', ['error' => $e->getMessage()]);
         }
 
-        // End analytics session
         try {
-            $this->analytics->endSession($response->getStatusCode());
+            $this->analytics->updateSession($response->getStatusCode());
         } catch (\Throwable $e) {
-            Log::debug('DebugMate: Failed to end analytics session', ['error' => $e->getMessage()]);
+            Log::debug('DebugMate: Failed to update analytics session', ['error' => $e->getMessage()]);
         }
+
+        $response->headers->setCookie(
+            Cookie::make(
+                self::SESSION_COOKIE,
+                $sessionId,
+                self::SESSION_MINUTES,
+                '/',
+                null,
+                $request->isSecure(),
+                true,
+                false,
+                SymfonyCookie::SAMESITE_LAX
+            )
+        );
 
         return $response;
     }

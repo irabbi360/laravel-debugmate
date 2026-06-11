@@ -24,6 +24,18 @@ class MetricDataDTO extends BaseDTO
         public readonly array $all_queries = [],
         public readonly array $spans = [],
         public readonly array $context = [],
+        public readonly string $timestamp = '',
+        // Span type data
+        public readonly array $job_spans = [],
+        public readonly array $command_spans = [],
+        public readonly array $http_client_spans = [],
+        public readonly array $view_spans = [],
+        public readonly array $livewire_spans = [],
+        public readonly int $job_count = 0,
+        public readonly int $command_count = 0,
+        public readonly int $http_client_count = 0,
+        public readonly int $view_count = 0,
+        public readonly int $livewire_count = 0,
     ) {}
 
     public static function from(array $data): static
@@ -43,6 +55,17 @@ class MetricDataDTO extends BaseDTO
             all_queries: $data['all_queries'] ?? [],
             spans: $data['spans'] ?? [],
             context: $data['context'] ?? [],
+            timestamp: $data['timestamp'] ?? now()->toIso8601String(),
+            job_spans: $data['job_spans'] ?? [],
+            command_spans: $data['command_spans'] ?? [],
+            http_client_spans: $data['http_client_spans'] ?? [],
+            view_spans: $data['view_spans'] ?? [],
+            livewire_spans: $data['livewire_spans'] ?? [],
+            job_count: $data['job_count'] ?? 0,
+            command_count: $data['command_count'] ?? 0,
+            http_client_count: $data['http_client_count'] ?? 0,
+            view_count: $data['view_count'] ?? 0,
+            livewire_count: $data['livewire_count'] ?? 0,
         );
     }
 
@@ -63,6 +86,17 @@ class MetricDataDTO extends BaseDTO
             'all_queries' => $this->all_queries,
             'spans' => $this->spans,
             'context' => $this->context,
+            'timestamp' => $this->timestamp,
+            'job_spans' => $this->job_spans,
+            'command_spans' => $this->command_spans,
+            'http_client_spans' => $this->http_client_spans,
+            'view_spans' => $this->view_spans,
+            'livewire_spans' => $this->livewire_spans,
+            'job_count' => $this->job_count,
+            'command_count' => $this->command_count,
+            'http_client_count' => $this->http_client_count,
+            'view_count' => $this->view_count,
+            'livewire_count' => $this->livewire_count,
         ];
     }
 
