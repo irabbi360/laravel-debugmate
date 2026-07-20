@@ -1,16 +1,15 @@
 # DebugMate SDK
 
-A comprehensive error tracking, log viewing, and performance monitoring package for Laravel applications.
+Error tracking, log streaming, and performance monitoring for Laravel apps.
 
 ## Features
 
-- 🚨 **Error Tracking**: Automatically capture and report PHP errors and exceptions
-- 📊 **Performance Monitoring**: Track application performance metrics
-- 📝 **Log Viewer**: Stream and view application logs in real-time
-- 🔐 **API Token Authentication**: Secure token-based communication
-- 🎯 **Selective Tracking**: Filter which errors and logs to track
-- ⚡ **Async Reporting**: Non-blocking error reporting via queues
-- 🏷️ **Tagging**: Tag errors with custom data for better organization
+- Error tracking with stack frames and fingerprinting
+- Performance monitoring with OpenTelemetry-style spans
+- Log streaming
+- Request analytics
+- Query / job / command / view / HTTP / Livewire collectors
+- Async reporting via queues
 
 ## Installation
 
@@ -20,7 +19,19 @@ composer require irabbi360/laravel-debugmate
 
 ## Quick Start
 
-### 1. Register Exception Handler
+### 1. Environment
+
+```env
+DEBUGMATE_ENABLED=true
+DEBUGMATE_API_URL=https://your-debugmate-host
+DEBUGMATE_PROJECT_KEY=dm_your_project_key
+DEBUGMATE_TRACK_ERRORS=true
+DEBUGMATE_TRACK_PERFORMANCE=true
+```
+
+Package auto-registers `TrackPerformance` when `DEBUGMATE_TRACK_PERFORMANCE=true` (no `bootstrap/app.php` edit needed).
+
+### 2. Register exception handler
 
 ```php
 // bootstrap/app.php
@@ -29,10 +40,10 @@ composer require irabbi360/laravel-debugmate
 })->create();
 ```
 
-To manually report an error:
+### 3. Manual reporting
 
 ```php
-use DebugMate\SDK\Facades\DebugMate;
+use Irabbi360\LaravelDebugMate\Facades\DebugMate;
 
 try {
     // Your code
@@ -40,115 +51,59 @@ try {
     DebugMate::reportError($e, [
         'user_id' => auth()->id(),
         'route' => request()->path(),
-        'custom_data' => 'any value'
     ]);
 }
 ```
 
-### Performance Monitoring
-
-Track specific operations:
+### Performance monitoring
 
 ```php
-use DebugMate\SDK\Facades\DebugMate;
+use Irabbi360\LaravelDebugMate\Facades\DebugMate;
 
 DebugMate::startMonitoring('database_query');
 // ... your code ...
 DebugMate::stopMonitoring('database_query', ['query' => 'SELECT...']);
 ```
 
-### Log Viewer API
-
-Stream logs to the DebugMate app:
+### Logs
 
 ```php
-use DebugMate\SDK\Facades\DebugMate;
+use Irabbi360\LaravelDebugMate\Facades\DebugMate;
 
-// Automatic - logs are streamed in real-time
-// Or manually push logs
 DebugMate::log('Channel', 'Log message', 'info', ['context_data']);
 ```
 
-## API Endpoints
+## Auth
 
-### Report Error
-```
-POST /api/debugmate/errors
-Authorization: Bearer {API_TOKEN}
+SDK sends `X-DebugMate-Key: {DEBUGMATE_PROJECT_KEY}` on every request.
 
-{
-  "project_key": "string",
-  "error_type": "string",
-  "message": "string",
-  "stack_trace": "string",
-  "context": object,
-  "tags": object,
-  "timestamp": "ISO 8601"
-}
-```
-
-### Stream Performance Metrics
-```
-POST /api/debugmate/metrics
-Authorization: Bearer {API_TOKEN}
-
-{
-  "project_key": "string",
-  "metric_name": "string",
-  "duration_ms": number,
-  "context": object,
-  "timestamp": "ISO 8601"
-}
-```
-
-### Stream Logs
-```
-POST /api/debugmate/logs
-Authorization: Bearer {API_TOKEN}
-
-{
-  "project_key": "string",
-  "channel": "string",
-  "message": "string",
-  "level": "string",
-  "context": object,
-  "timestamp": "ISO 8601"
-}
-```
+| Endpoint | Method |
+|----------|--------|
+| `/api/debugmate/verify-token` | GET |
+| `/api/debugmate/project` | GET |
+| `/api/debugmate/errors` | POST |
+| `/api/debugmate/metrics` | POST |
+| `/api/debugmate/logs` | POST |
+| `/api/debugmate/queries` | POST |
+| `/api/debugmate/analytics` | POST |
 
 ## Configuration
 
-Edit `config/debugmate.php`:
+Publish config (optional):
 
-```php
-return [
-    'enabled' => env('DEBUGMATE_ENABLED', true),
-    'api_url' => env('DEBUGMATE_API_URL'),
-    'api_token' => env('DEBUGMATE_API_TOKEN'),
-    'project_key' => env('DEBUGMATE_PROJECT_KEY'),
-    
-    // What to track
-    'track_errors' => true,
-    'track_logs' => true,
-    'track_performance' => true,
-    'track_queries' => false,
-    
-    // Queue configuration
-    'queue' => env('QUEUE_CONNECTION', 'sync'),
-    'async_reporting' => true,
-    
-    // Filtering
-    'ignore_paths' => ['health', 'ping'],
-    'ignore_exceptions' => [],
-    'sample_rate' => 1.0, // 0-1, percentage of requests to track
-];
+```bash
+php artisan vendor:publish --tag=config --provider="Irabbi360\LaravelDebugMate\DebugMateServiceProvider"
 ```
 
-## Documentation
+Key env vars: `DEBUGMATE_ENABLED`, `DEBUGMATE_API_URL`, `DEBUGMATE_PROJECT_KEY`, `DEBUGMATE_TRACK_*`, `DEBUGMATE_ASYNC_REPORTING`.
 
-See full documentation in `/docs` folder or visit [debugmate.app/docs](https://debugmate.app/docs)
+## Testing
+
+```bash
+composer install
+composer test
+```
 
 ## License
 
-MIT
-
+MIT — see [LICENSE.md](LICENSE.md)

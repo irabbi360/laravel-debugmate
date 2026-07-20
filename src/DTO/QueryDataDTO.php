@@ -24,7 +24,7 @@ class QueryDataDTO extends BaseDTO
         return new static(
             sql: $sql,
             time_ms: $data['time_ms'] ?? 0.0,
-            bindings_count: $data['bindings_count'] ?? ($data['bindings'] ? count($data['bindings']) : 0),
+            bindings_count: $data['bindings_count'] ?? (isset($data['bindings']) ? count($data['bindings']) : 0),
             operation: $data['operation'] ?? self::detectOperation($sql),
             bindings: $data['bindings'] ?? [],
             database: $data['database'] ?? 'default',

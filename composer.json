@@ -16,12 +16,16 @@
     "guzzlehttp/guzzle": "^7.0"
   },
   "require-dev": {
-    "phpunit/phpunit": "^10.0",
-    "orchestra/testbench": "^8.0 || ^9.0 || ^10.0"
+    "orchestra/testbench": "^8.0 || ^9.0 || ^10.0",
+    "phpunit/phpunit": "^10.0 || ^11.0"
   },
   "autoload": {
     "psr-4": {
-      "Irabbi360\\LaravelDebugMate\\": "src/",
+      "Irabbi360\\LaravelDebugMate\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
       "Irabbi360\\LaravelDebugMate\\Tests\\": "tests/"
     }
   },
@@ -34,6 +38,10 @@
         "DebugMate": "Irabbi360\\LaravelDebugMate\\Facades\\DebugMate"
       }
     }
-  }
+  },
+  "scripts": {
+    "test": "phpunit"
+  },
+  "minimum-stability": "dev",
+  "prefer-stable": true
 }
-

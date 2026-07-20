@@ -4,14 +4,12 @@ namespace Irabbi360\LaravelDebugMate;
 
 use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Support\ServiceProvider;
-use Irabbi360\LaravelDebugMate\Collectors\AnalyticsCollector;
 use Irabbi360\LaravelDebugMate\Collectors\CommandCollector;
 use Irabbi360\LaravelDebugMate\Collectors\HttpClientCollector;
 use Irabbi360\LaravelDebugMate\Collectors\JobCollector;
 use Irabbi360\LaravelDebugMate\Collectors\LivewireCollector;
 use Irabbi360\LaravelDebugMate\Collectors\QueryCollector;
 use Irabbi360\LaravelDebugMate\Collectors\ViewCollector;
-use Irabbi360\LaravelDebugMate\Http\Middleware\EnableQueryLogging;
 use Irabbi360\LaravelDebugMate\Http\Middleware\TrackAnalytics;
 use Irabbi360\LaravelDebugMate\Http\Middleware\TrackPerformance;
 use Irabbi360\LaravelDebugMate\Services\ApiClient;
@@ -118,6 +116,9 @@ class DebugMateServiceProvider extends ServiceProvider
 
         // Register analytics middleware if enabled
         $this->registerAnalyticsMiddleware();
+
+        // Register performance middleware if enabled
+        $this->registerPerformanceMiddleware();
 
         // Only register log listener - it handles both errors and logs
         // registerErrorHandler();  // DISABLED - errors handled in log listener
@@ -289,6 +290,23 @@ class DebugMateServiceProvider extends ServiceProvider
             $kernel->pushMiddleware(TrackAnalytics::class);
         } catch (\Throwable $e) {
             \Log::debug('DebugMate: Failed to register analytics middleware: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Register performance tracking middleware globally.
+     */
+    protected function registerPerformanceMiddleware(): void
+    {
+        if (! config('debugmate.track_performance')) {
+            return;
+        }
+
+        try {
+            $kernel = $this->app->make(Kernel::class);
+            $kernel->pushMiddleware(TrackPerformance::class);
+        } catch (\Throwable $e) {
+            \Log::debug('DebugMate: Failed to register performance middleware: '.$e->getMessage());
         }
     }
 }

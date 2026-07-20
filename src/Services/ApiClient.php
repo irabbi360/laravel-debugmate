@@ -69,7 +69,7 @@ class ApiClient
     public function verifyConnection(): bool
     {
         try {
-            $response = $this->client->get('/api/debugmate/verify', [
+            $response = $this->client->get('/api/debugmate/verify-token', [
                 'headers' => $this->getHeaders(),
             ]);
 
@@ -90,7 +90,7 @@ class ApiClient
     public function getProjectInfo(): ?array
     {
         try {
-            $response = $this->client->get('/api/debugmate/projects/'.$this->debugmateKey, [
+            $response = $this->client->get('/api/debugmate/project', [
                 'headers' => $this->getHeaders(),
             ]);
 
@@ -160,7 +160,7 @@ class ApiClient
         return [
             'Content-Type' => 'application/json',
             'Accept' => 'application/json',
-            'User-Agent' => 'DebugMate-SDK/2.0',
+            'User-Agent' => 'DebugMate-SDK/1.0',
             'X-DebugMate-Key' => $this->debugmateKey,
         ];
     }
