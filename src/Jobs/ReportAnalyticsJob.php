@@ -7,11 +7,12 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Irabbi360\LaravelDebugMate\Concerns\RetriesApiReporting;
 use Irabbi360\LaravelDebugMate\Services\ApiClient;
 
 class ReportAnalyticsJob implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable, InteractsWithQueue, Queueable, RetriesApiReporting, SerializesModels;
 
     protected array $payload;
 
@@ -22,16 +23,9 @@ class ReportAnalyticsJob implements ShouldQueue
 
     public function handle(ApiClient $apiClient): void
     {
-        try {
-            $apiClient->reportAnalytics($this->payload);
-        } catch (\Throwable $e) {
-            \Log::error('DebugMate: Failed to report analytics', [
-                'error' => $e->getMessage(),
-                'payload' => $this->payload,
-            ]);
-
-            throw $e;
-        }
+        $this->assertReported(
+            $apiClient->reportAnalytics($this->payload),
+            'analytics'
+        );
     }
 }
-

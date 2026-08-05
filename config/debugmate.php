@@ -106,7 +106,14 @@ return [
     /**
      * Maximum payload size (in bytes)
      */
-    'max_payload_size' => 1048576, // 1MB
+    'max_payload_size' => env('DEBUGMATE_MAX_PAYLOAD_SIZE', 1048576), // 1MB
+
+    /**
+     * Queue job retry settings for async reporting
+     */
+    'job_retries' => env('DEBUGMATE_JOB_RETRIES', 3),
+    'job_backoff_seconds' => [10, 30, 60],
+    'job_timeout' => env('DEBUGMATE_JOB_TIMEOUT', 30),
 
     /**
      * Request timeout (in seconds)

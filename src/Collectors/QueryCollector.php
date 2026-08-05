@@ -84,9 +84,8 @@ class QueryCollector implements CollectorInterface
             'slow' => $timeMs >= $this->slowThreshold,
         ];
 
-        // Call PerformanceMonitor's recordQuery to add to monitor's queries array
-        // This ensures queries are included in the final payload
-        $this->monitor->recordQuery($sql, $timeMs, $bindings);
+        // Persist query data for the final performance payload
+        $this->monitor->appendQuery($sql, $timeMs, $bindings);
 
         $this->monitor->endSpan($span);
     }

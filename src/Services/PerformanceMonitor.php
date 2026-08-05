@@ -257,6 +257,26 @@ class PerformanceMonitor
     }
 
     /**
+     * Append query data to the request payload without creating a span.
+     */
+    public function appendQuery(string $sql, float $timeMs, array $bindings = []): void
+    {
+        if (! ($this->config['track_queries'] ?? false)) {
+            return;
+        }
+
+        $queryDto = QueryDataDTO::from([
+            'sql' => $sql,
+            'time_ms' => $timeMs,
+            'bindings' => $bindings,
+            'bindings_count' => count($bindings),
+            'database' => 'default',
+        ]);
+
+        $this->queries[] = $queryDto->toArray();
+    }
+
+    /**
      * Record database query as a span using DTO.
      */
     public function recordQuery(string $sql, float $timeMs, array $bindings = []): void
@@ -265,7 +285,6 @@ class PerformanceMonitor
             return;
         }
 
-        // Create query DTO
         $queryDto = QueryDataDTO::from([
             'sql' => $sql,
             'time_ms' => $timeMs,
@@ -283,7 +302,7 @@ class PerformanceMonitor
 
         $span->setAttribute('duration_ms', $queryDto->time_ms);
 
-        $this->queries[] = $queryDto->toArray();
+        $this->appendQuery($sql, $timeMs, $bindings);
 
         $this->endSpan($span);
     }

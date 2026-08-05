@@ -32,6 +32,10 @@ class LogStreamer
      */
     public function streamLog(string $message, string $level, array $context = [], ?string $traceId = null, ?string $source = null): void
     {
+        if (! $this->shouldTrackLog($context)) {
+            return;
+        }
+
         // Extract exception data if present
         $stackTrace = null;
         $exceptionClass = null;
@@ -87,6 +91,10 @@ class LogStreamer
      */
     public function log(string $channel, string $message, string $level = 'info', array $context = [], ?string $traceId = null): void
     {
+        if (! $this->shouldTrackLog(['channel' => $channel])) {
+            return;
+        }
+
         $logData = [
             'trace_id' => $traceId,
             'channel' => $channel,
@@ -240,13 +248,8 @@ class LogStreamer
         $channel = $context['channel'] ?? 'default';
 
         // Check if channel is in tracked channels
-        if (!empty($this->config['log_channels'])) {
-            $shouldTrack = in_array($channel, $this->config['log_channels']);
-            // Debug logging
-            if (config('app.debug')) {
-                \Illuminate\Support\Facades\Log::debug('DebugMate: Channel check - channel=' . $channel . ', tracked=' . ($shouldTrack ? 'yes' : 'no') . ', configured=' . json_encode($this->config['log_channels']));
-            }
-            return $shouldTrack;
+        if (! empty($this->config['log_channels'])) {
+            return in_array($channel, $this->config['log_channels'], true);
         }
 
         return true;

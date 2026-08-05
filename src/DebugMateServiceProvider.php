@@ -10,6 +10,7 @@ use Irabbi360\LaravelDebugMate\Collectors\JobCollector;
 use Irabbi360\LaravelDebugMate\Collectors\LivewireCollector;
 use Irabbi360\LaravelDebugMate\Collectors\QueryCollector;
 use Irabbi360\LaravelDebugMate\Collectors\ViewCollector;
+use Irabbi360\LaravelDebugMate\Console\VerifyCommand;
 use Irabbi360\LaravelDebugMate\Http\Middleware\TrackAnalytics;
 use Irabbi360\LaravelDebugMate\Http\Middleware\TrackPerformance;
 use Irabbi360\LaravelDebugMate\Services\ApiClient;
@@ -109,6 +110,12 @@ class DebugMateServiceProvider extends ServiceProvider
             __DIR__.'/../config/debugmate.php' => config_path('debugmate.php'),
         ], 'config');
 
+        if ($this->app->runningInConsole()) {
+            $this->commands([
+                VerifyCommand::class,
+            ]);
+        }
+
         // Only load if enabled
         if (!config('debugmate.enabled')) {
             return;
@@ -120,8 +127,7 @@ class DebugMateServiceProvider extends ServiceProvider
         // Register performance middleware if enabled
         $this->registerPerformanceMiddleware();
 
-        // Only register log listener - it handles both errors and logs
-        // registerErrorHandler();  // DISABLED - errors handled in log listener
+        // Errors: register ExceptionHandler::handles() in bootstrap/app.php
         $this->registerLogListener();
         $this->registerPerformanceMonitoring();
     }

@@ -18,13 +18,14 @@ class ExceptionHandler
      *
      * Usage in bootstrap/app.php:
      * ->withExceptions(function (Exceptions $exceptions) {
-     *     \DebugMate\SDK\Services\ExceptionHandler::handles($exceptions);
+     *     \Irabbi360\LaravelDebugMate\Services\ExceptionHandler::handles($exceptions);
      * })->create();
      */
     public static function handles(Exceptions $exceptions): void
     {
-        // Only register if enabled and configured
-        if (!config('debugmate.enabled') || !config('debugmate.debugmate_key')) {
+        if (! config('debugmate.enabled')
+            || ! config('debugmate.track_errors', true)
+            || ! config('debugmate.debugmate_key')) {
             return;
         }
 

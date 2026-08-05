@@ -4,7 +4,8 @@ namespace Irabbi360\LaravelDebugMate\Services;
 
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\RequestException;
-use Illuminate\Support\Facades\Log;
+use Irabbi360\LaravelDebugMate\Support\InternalLog;
+use Irabbi360\LaravelDebugMate\Support\PayloadLimiter;
 
 class ApiClient
 {
@@ -75,7 +76,7 @@ class ApiClient
 
             return $response->getStatusCode() === 200;
         } catch (RequestException $e) {
-            Log::error('DebugMate connection verification failed', [
+            InternalLog::error('DebugMate connection verification failed', [
                 'error' => $e->getMessage(),
                 'code' => $e->getCode(),
             ]);
@@ -98,9 +99,8 @@ class ApiClient
                 return json_decode($response->getBody()->getContents(), true);
             }
         } catch (RequestException $e) {
-            Log::error('DebugMate project info fetch failed', [
+            InternalLog::error('DebugMate project info fetch failed', [
                 'error' => $e->getMessage(),
-                'debugmate_key' => $this->debugmateKey,
             ]);
         }
 
@@ -114,7 +114,7 @@ class ApiClient
     {
         // Check if key is configured
         if ($this->debugmateKey === 'not-configured') {
-            Log::warning('DebugMate key is not configured. Set DEBUGMATE_PROJECT_KEY in .env', [
+            InternalLog::warning('DebugMate key is not configured. Set DEBUGMATE_PROJECT_KEY in .env', [
                 'endpoint' => $endpoint,
             ]);
             return false;
@@ -126,6 +126,8 @@ class ApiClient
                 'environment' => config('app.env', 'production'),
             ]);
 
+            $payload = (new PayloadLimiter)->fit($payload);
+
             $response = $this->client->post($endpoint, [
                 'headers' => $this->getHeaders(),
                 'json' => $payload,
@@ -135,14 +137,14 @@ class ApiClient
                 return true;
             }
 
-            Log::warning('DebugMate API returned non-success status', [
+            InternalLog::warning('DebugMate API returned non-success status', [
                 'status_code' => $response->getStatusCode(),
                 'endpoint' => $endpoint,
             ]);
 
             return false;
         } catch (RequestException $e) {
-            Log::error('DebugMate API request failed', [
+            InternalLog::error('DebugMate API request failed', [
                 'endpoint' => $endpoint,
                 'error' => $e->getMessage(),
                 'code' => $e->getCode(),

@@ -70,7 +70,15 @@ DebugMate::stopMonitoring('database_query', ['query' => 'SELECT...']);
 ```php
 use Irabbi360\LaravelDebugMate\Facades\DebugMate;
 
-DebugMate::log('Channel', 'Log message', 'info', ['context_data']);
+DebugMate::log('stack', 'Log message', 'info', ['context_data']);
+```
+
+Only channels listed in `config/debugmate.php` `log_channels` are streamed when `DEBUGMATE_TRACK_LOGS=true`.
+
+### Verify setup
+
+```bash
+php artisan debugmate:verify
 ```
 
 ## Auth

@@ -2,14 +2,15 @@
 
 namespace Irabbi360\LaravelDebugMate\Jobs;
 
+use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Bus\Queueable;
+use Irabbi360\LaravelDebugMate\Concerns\RetriesApiReporting;
 use Irabbi360\LaravelDebugMate\Services\ApiClient;
 
 class ReportMetricJob implements ShouldQueue
 {
-    use Queueable, SerializesModels;
+    use Queueable, RetriesApiReporting, SerializesModels;
 
     protected array $metricData;
 
@@ -18,20 +19,11 @@ class ReportMetricJob implements ShouldQueue
         $this->metricData = $metricData;
     }
 
-    /**
-     * Execute the job.
-     */
     public function handle(ApiClient $apiClient): void
     {
-        $apiClient->reportMetric($this->metricData);
-    }
-
-    /**
-     * Determine the time at which the job should timeout.
-     */
-    public function timeout(): int
-    {
-        return 30; // 30 seconds
+        $this->assertReported(
+            $apiClient->reportMetric($this->metricData),
+            'metric'
+        );
     }
 }
-

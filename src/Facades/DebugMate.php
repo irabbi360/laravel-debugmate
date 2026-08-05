@@ -5,10 +5,12 @@ namespace Irabbi360\LaravelDebugMate\Facades;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Support\Facades\Facade;
 use Irabbi360\LaravelDebugMate\Services\ExceptionHandler;
+use Irabbi360\LaravelDebugMate\Services\LogStreamer;
 use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
 
 /**
  * @method static void reportError(\Throwable $exception, array $context = [])
+ * @method static void log(string $channel, string $message, string $level = 'info', array $context = [], ?string $traceId = null)
  * @method static array getPerformanceSummary()
  * @method static void trackPageView(array $pageData)
  * @method static void trackEvent(string $eventName, array $eventData = [], string $category = null)
@@ -86,6 +88,14 @@ class DebugMate extends Facade
     public static function getPerformanceSummary(): array
     {
         return app(PerformanceMonitor::class)->getSummary();
+    }
+
+    /**
+     * Manually stream a log entry to DebugMate.
+     */
+    public static function log(string $channel, string $message, string $level = 'info', array $context = [], ?string $traceId = null): void
+    {
+        app(LogStreamer::class)->log($channel, $message, $level, $context, $traceId);
     }
 
     // ── Analytics Methods ──────────────────────────────────────────────────────

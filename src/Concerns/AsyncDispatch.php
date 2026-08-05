@@ -2,8 +2,8 @@
 
 namespace Irabbi360\LaravelDebugMate\Concerns;
 
-use Illuminate\Support\Facades\Log;
 use Irabbi360\LaravelDebugMate\Jobs\ReportErrorJob;
+use Irabbi360\LaravelDebugMate\Support\InternalLog;
 use Irabbi360\LaravelDebugMate\Jobs\ReportLogJob;
 use Irabbi360\LaravelDebugMate\Jobs\ReportMetricJob;
 use Irabbi360\LaravelDebugMate\Jobs\ReportAnalyticsJob;
@@ -24,7 +24,7 @@ trait AsyncDispatch
             dispatch(new ReportErrorJob($errorData))
                 ->onQueue($this->getQueueName('errors'));
         } catch (\Exception $e) {
-            Log::error('DebugMate: Failed to dispatch error reporting job', [
+            InternalLog::error('DebugMate: Failed to dispatch error reporting job', [
                 'error' => $e->getMessage(),
             ]);
             $this->handleDispatchFailure('error', $errorData);
@@ -40,7 +40,7 @@ trait AsyncDispatch
             dispatch(new ReportLogJob($logData))
                 ->onQueue($this->getQueueName('logs'));
         } catch (\Exception $e) {
-            Log::error('DebugMate: Failed to dispatch log reporting job', [
+            InternalLog::error('DebugMate: Failed to dispatch log reporting job', [
                 'error' => $e->getMessage(),
             ]);
             $this->handleDispatchFailure('log', $logData);
@@ -56,7 +56,7 @@ trait AsyncDispatch
             dispatch(new ReportMetricJob($metricData))
                 ->onQueue($this->getQueueName('metrics'));
         } catch (\Exception $e) {
-            Log::error('DebugMate: Failed to dispatch metric reporting job', [
+            InternalLog::error('DebugMate: Failed to dispatch metric reporting job', [
                 'error' => $e->getMessage(),
             ]);
             $this->handleDispatchFailure('metric', $metricData);
@@ -72,7 +72,7 @@ trait AsyncDispatch
             dispatch(new ReportAnalyticsJob($analyticsData))
                 ->onQueue($this->getQueueName('analytics'));
         } catch (\Exception $e) {
-            Log::error('DebugMate: Failed to dispatch analytics reporting job', [
+            InternalLog::error('DebugMate: Failed to dispatch analytics reporting job', [
                 'error' => $e->getMessage(),
             ]);
             $this->handleDispatchFailure('analytics', $analyticsData);
@@ -94,7 +94,7 @@ trait AsyncDispatch
      */
     protected function handleDispatchFailure(string $type, array $data): void
     {
-        Log::warning("DebugMate: Job dispatch failed for {$type}, consider enabling sync queue");
+        InternalLog::warning("DebugMate: Job dispatch failed for {$type}, consider enabling sync queue");
     }
 
     /**
@@ -107,7 +107,7 @@ trait AsyncDispatch
                 ->onQueue($this->getQueueName('default'))
                 ->delay(now()->addSeconds($seconds));
         } catch (\Exception $e) {
-            Log::error('DebugMate: Failed to dispatch delayed job', [
+            InternalLog::error('DebugMate: Failed to dispatch delayed job', [
                 'error' => $e->getMessage(),
             ]);
         }
@@ -122,7 +122,7 @@ trait AsyncDispatch
             $jobs = array_map(fn($item) => new $jobClass($item), $items);
             dispatch($jobs);
         } catch (\Exception $e) {
-            Log::error('DebugMate: Failed to batch dispatch jobs', [
+            InternalLog::error('DebugMate: Failed to batch dispatch jobs', [
                 'error' => $e->getMessage(),
                 'count' => count($items),
             ]);

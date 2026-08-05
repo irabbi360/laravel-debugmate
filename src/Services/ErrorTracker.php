@@ -56,7 +56,7 @@ class ErrorTracker
         $traceId = $traceId ?? \Illuminate\Support\Str::uuid()->toString();
 
         // Parse detailed stack frames using trait
-        $frames = $this->stackTraceParser->parseThrowable($exception);;
+        $frames = $this->stackTraceParser->parseThrowable($exception);
         $metadata = $this->captureExceptionMetadata($exception);
 
         // Collect complete context information
@@ -73,7 +73,7 @@ class ErrorTracker
             'stack_trace' => json_encode($this->stackTraceParser->toArray($frames)),
             'frames' => $this->stackTraceParser->toArray($frames),
             'fingerprint' => $this->generateErrorFingerprint($exception),
-            'context' => $completedContext,
+            'context' => $this->sanitizeData($completedContext),
             'source' => $this->detectSource(),
             'user_id' => auth()->id() ?? null,
             'url' => request()->url() ?? null,
