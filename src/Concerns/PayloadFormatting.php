@@ -26,7 +26,7 @@ trait PayloadFormatting
             'fingerprint' => $errorData['fingerprint'] ?? null,
             'context' => $errorData['context'] ?? [],
             'source' => $errorData['source'] ?? 'http',
-            'timestamp' => now()->toIso8601String(),
+            'timestamp' => $errorData['timestamp'] ?? now()->format('Y-m-d\TH:i:s\Z'),
         ];
     }
 
@@ -48,7 +48,7 @@ trait PayloadFormatting
             'line' => $logData['line'] ?? null,
             'user_id' => $logData['user_id'] ?? null,
             'url' => $logData['url'] ?? null,
-            'timestamp' => now()->toIso8601String(),
+            'timestamp' => $logData['timestamp'] ?? now()->format('Y-m-d\TH:i:s\Z'),
         ];
     }
 
@@ -71,7 +71,7 @@ trait PayloadFormatting
             'spans' => $metricData['spans'] ?? [],
             'context' => $metricData['context'] ?? [],
             'environment' => $metricData['environment'] ?? config('app.env'),
-            'timestamp' => now()->toIso8601String(),
+            'timestamp' => $metricData['timestamp'] ?? now()->format('Y-m-d\TH:i:s\Z'),
         ];
     }
 
@@ -100,7 +100,7 @@ trait PayloadFormatting
             'event_name' => $analyticsData['event_name'] ?? null,
             'event_data' => $analyticsData['event_data'] ?? [],
             'context' => $analyticsData['context'] ?? [],
-            'timestamp' => now()->toIso8601String(),
+            'timestamp' => $analyticsData['timestamp'] ?? now()->format('Y-m-d\TH:i:s\Z'),
         ];
     }
 

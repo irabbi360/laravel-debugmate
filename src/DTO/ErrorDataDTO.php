@@ -30,6 +30,7 @@ class ErrorDataDTO extends BaseDTO
         public readonly ?string $ip_address = null,
         public readonly ?string $method = null,
         public readonly ?int $status_code = null,
+        public readonly ?string $timestamp = null,
     ) {}
 
     public static function from(array $data): static
@@ -52,6 +53,7 @@ class ErrorDataDTO extends BaseDTO
             ip_address: $data['ip_address'] ?? null,
             method: $data['method'] ?? null,
             status_code: $data['status_code'] ?? null,
+            timestamp: $data['timestamp'] ?? now()->format('Y-m-d\TH:i:s\Z'),
         );
     }
 
@@ -75,6 +77,7 @@ class ErrorDataDTO extends BaseDTO
             'ip_address' => $this->ip_address,
             'method' => $this->method,
             'status_code' => $this->status_code,
+            'timestamp' => $this->timestamp,
         ];
     }
 

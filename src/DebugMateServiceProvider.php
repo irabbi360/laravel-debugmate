@@ -10,6 +10,7 @@ use Irabbi360\LaravelDebugMate\Collectors\JobCollector;
 use Irabbi360\LaravelDebugMate\Collectors\LivewireCollector;
 use Irabbi360\LaravelDebugMate\Collectors\QueryCollector;
 use Irabbi360\LaravelDebugMate\Collectors\ViewCollector;
+use Irabbi360\LaravelDebugMate\Console\RegisterMonitorsCommand;
 use Irabbi360\LaravelDebugMate\Console\VerifyCommand;
 use Irabbi360\LaravelDebugMate\Http\Middleware\TrackAnalytics;
 use Irabbi360\LaravelDebugMate\Http\Middleware\TrackPerformance;
@@ -20,6 +21,7 @@ use Irabbi360\LaravelDebugMate\Services\ErrorTracker;
 use Irabbi360\LaravelDebugMate\Services\ExceptionHandler;
 use Irabbi360\LaravelDebugMate\Services\GeoLocation;
 use Irabbi360\LaravelDebugMate\Services\LogStreamer;
+use Irabbi360\LaravelDebugMate\Services\MonitorRegistrar;
 use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
 use Irabbi360\LaravelDebugMate\Services\RequestAnalytics;
 use Irabbi360\LaravelDebugMate\Services\StackTraceParser;
@@ -94,6 +96,13 @@ class DebugMateServiceProvider extends ServiceProvider
             return new GeoLocation();
         });
 
+        $this->app->singleton(MonitorRegistrar::class, function ($app) {
+            return new MonitorRegistrar(
+                $app->make(ApiClient::class),
+                config('debugmate')
+            );
+        });
+
         // Bind the 'debugmate' facade accessor to ErrorTracker
         $this->app->bind('debugmate', function ($app) {
             return $app->make(ErrorTracker::class);
@@ -113,6 +122,7 @@ class DebugMateServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([
                 VerifyCommand::class,
+                RegisterMonitorsCommand::class,
             ]);
         }
 
@@ -130,6 +140,25 @@ class DebugMateServiceProvider extends ServiceProvider
         // Errors: register ExceptionHandler::handles() in bootstrap/app.php
         $this->registerLogListener();
         $this->registerPerformanceMonitoring();
+        $this->registerMonitorSync();
+    }
+
+    /**
+     * Optionally sync monitor targets on boot.
+     */
+    protected function registerMonitorSync(): void
+    {
+        if (! config('debugmate.track_monitors') || ! config('debugmate.monitors.sync_on_boot')) {
+            return;
+        }
+
+        try {
+            $this->app->make(MonitorRegistrar::class)->sync(
+                async: (bool) config('debugmate.async_reporting', false)
+            );
+        } catch (\Throwable $e) {
+            \Log::debug('DebugMate: Failed to sync monitors on boot: '.$e->getMessage());
+        }
     }
 
     /**

@@ -25,6 +25,7 @@ class ApiClientEndpointsTest extends TestCase
             '/api/debugmate/logs',
             '/api/debugmate/queries',
             '/api/debugmate/analytics',
+            '/api/debugmate/monitors',
             '/api/debugmate/verify-token',
             '/api/debugmate/project',
         ];

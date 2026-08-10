@@ -13,6 +13,7 @@ class RetriesApiReportingTest extends TestCase
             'ReportLogJob.php',
             'ReportMetricJob.php',
             'ReportAnalyticsJob.php',
+            'RegisterMonitorsJob.php',
         ];
 
         foreach ($jobs as $job) {

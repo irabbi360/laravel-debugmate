@@ -42,7 +42,7 @@ class LogDataDTO extends BaseDTO
             line: $data['line'] ?? null,
             user_id: $data['user_id'] ?? null,
             url: $data['url'] ?? null,
-            timestamp: $data['timestamp'] ?? now()->toDateTimeString(),
+            timestamp: $data['timestamp'] ?? now()->format('Y-m-d\TH:i:s\Z'),
         );
     }
 

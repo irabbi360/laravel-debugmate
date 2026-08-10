@@ -9,6 +9,7 @@ Error tracking, log streaming, and performance monitoring for Laravel apps.
 - Log streaming
 - Request analytics
 - Query / job / command / view / HTTP / Livewire collectors
+- Uptime / SSL / domain monitor registration (checks run on DebugMate)
 - Async reporting via queues
 
 ## Installation
@@ -75,6 +76,22 @@ DebugMate::log('stack', 'Log message', 'info', ['context_data']);
 
 Only channels listed in `config/debugmate.php` `log_channels` are streamed when `DEBUGMATE_TRACK_LOGS=true`.
 
+### Uptime / SSL / domain monitors
+
+DebugMate servers run the checks. This package only registers target URLs.
+
+```env
+DEBUGMATE_TRACK_MONITORS=true
+DEBUGMATE_MONITOR_URLS=https://example.com,https://api.example.com
+DEBUGMATE_MONITOR_INCLUDE_APP_URL=true
+```
+
+Register (add to client scheduler daily):
+
+```bash
+php artisan debugmate:register-monitors --sync
+```
+
 ### Verify setup
 
 ```bash
@@ -94,6 +111,7 @@ SDK sends `X-DebugMate-Key: {DEBUGMATE_PROJECT_KEY}` on every request.
 | `/api/debugmate/logs` | POST |
 | `/api/debugmate/queries` | POST |
 | `/api/debugmate/analytics` | POST |
+| `/api/debugmate/monitors` | POST |
 
 ## Configuration
 

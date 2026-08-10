@@ -55,7 +55,7 @@ class MetricDataDTO extends BaseDTO
             all_queries: $data['all_queries'] ?? [],
             spans: $data['spans'] ?? [],
             context: $data['context'] ?? [],
-            timestamp: $data['timestamp'] ?? now()->toIso8601String(),
+            timestamp: $data['timestamp'] ?? now()->format('Y-m-d\TH:i:s\Z'),
             job_spans: $data['job_spans'] ?? [],
             command_spans: $data['command_spans'] ?? [],
             http_client_spans: $data['http_client_spans'] ?? [],

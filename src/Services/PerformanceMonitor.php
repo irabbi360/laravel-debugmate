@@ -179,7 +179,7 @@ class PerformanceMonitor
             'context' => [
                 'app_name' => config('app.name'),
             ],
-            'timestamp' => now()->toIso8601String(),
+            'timestamp' => now()->format('Y-m-d\TH:i:s\Z'),
         ]);
 
         $this->reportFromDTO($metricData);

@@ -31,6 +31,26 @@ return [
     'track_performance' => env('DEBUGMATE_TRACK_PERFORMANCE', false),
     'track_queries' => env('DEBUGMATE_TRACK_QUERIES', true),
     'track_analytics' => env('DEBUGMATE_TRACK_ANALYTICS', false),
+    'track_monitors' => env('DEBUGMATE_TRACK_MONITORS', false),
+
+    /**
+     * Uptime / SSL / domain monitors
+     * DebugMate servers run the checks; this package only registers targets.
+     */
+    'monitors' => [
+        'urls' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('DEBUGMATE_MONITOR_URLS', ''))
+        ))),
+        'include_app_url' => env('DEBUGMATE_MONITOR_INCLUDE_APP_URL', true),
+        'sync_on_boot' => env('DEBUGMATE_MONITOR_SYNC_ON_BOOT', false),
+        'check_ssl' => env('DEBUGMATE_MONITOR_CHECK_SSL', true),
+        'check_domain' => env('DEBUGMATE_MONITOR_CHECK_DOMAIN', true),
+        'check_uptime' => env('DEBUGMATE_MONITOR_CHECK_UPTIME', true),
+        'expected_status' => (int) env('DEBUGMATE_MONITOR_EXPECTED_STATUS', 200),
+        'timeout_seconds' => (int) env('DEBUGMATE_MONITOR_TIMEOUT', 10),
+        'replace' => env('DEBUGMATE_MONITOR_REPLACE', false),
+    ],
 
     /**
      * Data collectors configuration

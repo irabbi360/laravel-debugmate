@@ -102,6 +102,7 @@ class LogStreamer
             'level' => $level,
             'source' => $this->detectSource(),
             'context' => array_merge($this->getDefaultContext(), $context),
+            'timestamp' => now()->format('Y-m-d\TH:i:s\Z'),
         ];
 
         if ($this->config['async_reporting']) {
@@ -120,7 +121,7 @@ class LogStreamer
             'message' => $message,
             'level' => $level,
             'context' => $context,
-            'timestamp' => now()->toIso8601String(),
+            'timestamp' => now()->format('Y-m-d\TH:i:s\Z'),
         ];
     }
 

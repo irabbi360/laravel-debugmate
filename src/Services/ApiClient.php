@@ -65,6 +65,14 @@ class ApiClient
     }
 
     /**
+     * Register / sync uptime & SSL monitor targets with DebugMate.
+     */
+    public function registerMonitors(array $payload): bool
+    {
+        return $this->send('/api/debugmate/monitors', $payload);
+    }
+
+    /**
      * Verify API connection.
      */
     public function verifyConnection(): bool
@@ -122,8 +130,8 @@ class ApiClient
 
         try {
             $payload = array_merge($data, [
-                'timestamp' => now()->format('Y-m-d\TH:i:s\Z'),
-                'environment' => config('app.env', 'production'),
+                'timestamp' => $this->resolveEventTimestamp($data['timestamp'] ?? null),
+                'environment' => $data['environment'] ?? config('app.env', 'production'),
             ]);
 
             $payload = (new PayloadLimiter)->fit($payload);
@@ -151,6 +159,29 @@ class ApiClient
             ]);
 
             return false;
+        }
+    }
+
+    /**
+     * Prefer event occurrence time from payload; fall back to send time.
+     * Normalized to API format: Y-m-d\TH:i:s\Z
+     */
+    protected function resolveEventTimestamp(mixed $timestamp): string
+    {
+        $format = 'Y-m-d\TH:i:s\Z';
+
+        if ($timestamp === null || $timestamp === '') {
+            return now()->format($format);
+        }
+
+        if (is_string($timestamp) && preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', $timestamp)) {
+            return $timestamp;
+        }
+
+        try {
+            return \Carbon\Carbon::parse($timestamp)->format($format);
+        } catch (\Throwable) {
+            return now()->format($format);
         }
     }
 
