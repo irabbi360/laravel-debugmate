@@ -21,7 +21,7 @@ return [
      * Project Key (identifies your application)
      * This is the only required configuration
      */
-    'debugmate_key' => env('DEBUGMATE_PROJECT_KEY'),
+    'debugmate_key' => env('DEBUGMATE_PROJECT_KEY', env('DEBUGMATE_KEY')),
 
     /**
      * What to track

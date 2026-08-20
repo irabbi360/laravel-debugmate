@@ -30,10 +30,11 @@ class VerifyCommand extends Command
         $this->components->twoColumnDetail('API URL', (string) config('debugmate.api_url'));
         $this->components->twoColumnDetail('Project key', $this->maskKey($projectKey));
 
-        $this->components->info('Verifying API connection...');
+        $this->components->info('Verifying API connection (POST /api/debugmate/verify-token)...');
 
         if (! $apiClient->verifyConnection()) {
-            $this->components->error('Connection failed. Check DEBUGMATE_API_URL and DEBUGMATE_PROJECT_KEY.');
+            $this->components->error('Connection failed. Key reached API but was rejected, or URL is wrong.');
+            $this->components->error('Check DEBUGMATE_API_URL, DEBUGMATE_PROJECT_KEY, and restart queue workers after .env change.');
 
             return self::FAILURE;
         }

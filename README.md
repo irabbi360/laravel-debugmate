@@ -100,11 +100,13 @@ php artisan debugmate:verify
 
 ## Auth
 
-SDK sends `X-DebugMate-Key: {DEBUGMATE_PROJECT_KEY}` on every request.
+SDK sends `X-DebugMate-Key` and `Authorization: Bearer {DEBUGMATE_PROJECT_KEY}` on every request.
+
+`debugmate:verify` POSTs `/api/debugmate/verify-token` so it tests the same auth path as error ingest.
 
 | Endpoint | Method |
 |----------|--------|
-| `/api/debugmate/verify-token` | GET |
+| `/api/debugmate/verify-token` | GET, POST |
 | `/api/debugmate/project` | GET |
 | `/api/debugmate/errors` | POST |
 | `/api/debugmate/metrics` | POST |

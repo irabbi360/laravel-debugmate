@@ -73,23 +73,50 @@ class ApiClient
     }
 
     /**
-     * Verify API connection.
+     * Verify API connection using POST so ingest auth is tested, not only GET.
      */
     public function verifyConnection(): bool
     {
+        if (! $this->hasConfiguredKey()) {
+            InternalLog::warning('DebugMate key is not configured. Set DEBUGMATE_PROJECT_KEY in .env');
+
+            return false;
+        }
+
         try {
-            $response = $this->client->get('/api/debugmate/verify-token', [
+            $response = $this->client->post('/api/debugmate/verify-token', [
                 'headers' => $this->getHeaders(),
+                'json' => [],
             ]);
 
             return $response->getStatusCode() === 200;
         } catch (RequestException $e) {
-            InternalLog::error('DebugMate connection verification failed', [
-                'error' => $e->getMessage(),
-                'code' => $e->getCode(),
-            ]);
+            $status = $e->getResponse()?->getStatusCode();
 
-            return false;
+            if (in_array($status, [401, 403], true)) {
+                InternalLog::error('DebugMate connection verification failed', [
+                    'error' => $e->getMessage(),
+                    'code' => $e->getCode(),
+                ]);
+
+                return false;
+            }
+
+            // Older APIs only expose GET verify-token.
+            try {
+                $response = $this->client->get('/api/debugmate/verify-token', [
+                    'headers' => $this->getHeaders(),
+                ]);
+
+                return $response->getStatusCode() === 200;
+            } catch (RequestException $fallback) {
+                InternalLog::error('DebugMate connection verification failed', [
+                    'error' => $fallback->getMessage(),
+                    'code' => $fallback->getCode(),
+                ]);
+
+                return false;
+            }
         }
     }
 
@@ -120,11 +147,11 @@ class ApiClient
      */
     protected function send(string $endpoint, array $data): bool
     {
-        // Check if key is configured
-        if ($this->debugmateKey === 'not-configured') {
+        if (! $this->hasConfiguredKey()) {
             InternalLog::warning('DebugMate key is not configured. Set DEBUGMATE_PROJECT_KEY in .env', [
                 'endpoint' => $endpoint,
             ]);
+
             return false;
         }
 
@@ -190,12 +217,29 @@ class ApiClient
      */
     protected function getHeaders(): array
     {
+        $key = $this->resolveKey();
+
         return [
             'Content-Type' => 'application/json',
             'Accept' => 'application/json',
             'User-Agent' => 'DebugMate-SDK/1.0',
-            'X-DebugMate-Key' => $this->debugmateKey,
+            'X-DebugMate-Key' => $key,
+            'Authorization' => 'Bearer '.$key,
         ];
+    }
+
+    protected function resolveKey(): string
+    {
+        $key = trim((string) (config('debugmate.debugmate_key') ?: $this->debugmateKey));
+
+        return $key !== '' ? $key : 'not-configured';
+    }
+
+    protected function hasConfiguredKey(): bool
+    {
+        $key = $this->resolveKey();
+
+        return $key !== '' && $key !== 'not-configured';
     }
 }
 
