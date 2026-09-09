@@ -84,6 +84,89 @@ return [
     ],
 
     /**
+     * Artisan commands to ignore.
+     *
+     * Long-running daemons MUST stay in this list. A daemon fires
+     * CommandStarting but not CommandFinished for hours or days, so the trace
+     * it opens is never flushed: spans and queries accumulate for the whole
+     * process lifetime and the worker leaks memory until it is OOM-killed.
+     *
+     * Supports `*` wildcards (matched with Str::is).
+     */
+    'ignore_commands' => [
+        // Long-running daemons - never let these open a trace
+        'queue:work',
+        'queue:listen',
+        'horizon',
+        'horizon:work',
+        'horizon:supervisor',
+        'schedule:work',
+        'octane:start',
+        'reverb:start',
+        'websockets:serve',
+        'pail',
+        'serve',
+
+        // Per-minute scheduler noise
+        'schedule:run',
+        'schedule:finish',
+
+        // DebugMate's own commands - reporting on reporting
+        'debugmate:*',
+
+        // Trivial commands
+        'list',
+        'help',
+        'clear-compiled',
+    ],
+
+    /**
+     * Database tables to ignore in query tracking.
+     *
+     * Writing telemetry must not itself generate telemetry. Without this,
+     * every INSERT into `jobs` or `performance_monitors` produces another
+     * query span, which enlarges the next payload, which produces more
+     * writes - an amplification loop that is unbounded when an app reports
+     * to itself.
+     *
+     * Supports `*` wildcards (matched with Str::is).
+     */
+    'ignore_tables' => [
+        // Queue / framework infrastructure
+        'jobs',
+        'job_batches',
+        'failed_jobs',
+        'sessions',
+        'cache',
+        'cache_locks',
+
+        // DebugMate ingest tables (only present when self-hosting DebugMate)
+        'debug_requests',
+        'performance_monitors',
+        'track_errors',
+        'track_logs',
+        'error_groups',
+        'log_groups',
+        'log_breadcrumbs',
+        'uptime_checks',
+        'debugmate_analytics_*',
+
+        // Other profilers
+        'telescope_*',
+    ],
+
+    /**
+     * Hard in-memory caps per trace.
+     *
+     * These bound worst-case memory and payload size even if a trace is never
+     * flushed. Overflow is dropped and counted, never buffered.
+     */
+    'limits' => [
+        'max_spans' => (int) env('DEBUGMATE_MAX_SPANS', 500),
+        'max_queries' => (int) env('DEBUGMATE_MAX_QUERIES', 200),
+    ],
+
+    /**
      * Exception classes to ignore
      */
     'ignore_exceptions' => [
@@ -126,7 +209,7 @@ return [
     /**
      * Maximum payload size (in bytes)
      */
-    'max_payload_size' => env('DEBUGMATE_MAX_PAYLOAD_SIZE', 1048576), // 1MB
+    'max_payload_size' => env('DEBUGMATE_MAX_PAYLOAD_SIZE', 262144), // 256KB
 
     /**
      * Queue job retry settings for async reporting

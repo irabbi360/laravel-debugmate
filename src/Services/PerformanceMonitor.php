@@ -13,6 +13,9 @@ use Irabbi360\LaravelDebugMate\Tracing\Tracer;
 
 class PerformanceMonitor
 {
+    /** Fallback cap when `debugmate.limits.max_queries` is not configured. */
+    public const DEFAULT_MAX_QUERIES = 200;
+
     use AsyncDispatch;
     use CaptureQueryData;
     use CaptureRequestData;
@@ -26,6 +29,8 @@ class PerformanceMonitor
     protected ?Span $rootSpan = null;
 
     protected array $queries = [];
+
+    protected int $droppedQueries = 0;
 
     public function __construct(ApiClient $apiClient, array $config)
     {
@@ -53,6 +58,7 @@ class PerformanceMonitor
         ]);
 
         $this->queries = [];
+        $this->droppedQueries = 0;
 
         return $this->tracer->getTraceId();
     }
@@ -70,6 +76,7 @@ class PerformanceMonitor
         ]);
 
         $this->queries = [];
+        $this->droppedQueries = 0;
 
         return $this->tracer->getTraceId();
     }
@@ -108,6 +115,7 @@ class PerformanceMonitor
         ]);
 
         $this->queries = [];
+        $this->droppedQueries = 0;
 
         return $this->tracer->getTraceId();
     }
@@ -141,11 +149,11 @@ class PerformanceMonitor
         $responseThreshold = $this->config['thresholds']['response_time_ms'] ?? 5000;
         $durationMs = $this->rootSpan->getDurationMs();
 
-        $queryThreshold = $this->config['thresholds']['query_time_ms'] ?? 1000;
-        $slowQueries = array_values(array_filter($this->queries, fn ($q) => $q['time_ms'] >= $queryThreshold));
+        $slowQueries = $this->getSlowQueries();
 
         $allSpans = $this->tracer->toArray();
         $spans = $allSpans['spans'] ?? [];
+        $droppedSpans = (int) ($allSpans['dropped_spans'] ?? 0);
 
         // Separate spans by type for detailed tracking
         $separatedSpans = $this->separateSpansByType($spans);
@@ -176,9 +184,13 @@ class PerformanceMonitor
             'http_client_count' => count($separatedSpans['http_client'] ?? []),
             'view_count' => count($separatedSpans['view'] ?? []),
             'livewire_count' => count($separatedSpans['livewire'] ?? []),
-            'context' => [
+            'context' => array_filter([
                 'app_name' => config('app.name'),
-            ],
+                // Surfaced so a truncated trace is visibly truncated rather
+                // than silently incomplete.
+                'dropped_spans' => $droppedSpans ?: null,
+                'dropped_queries' => $this->droppedQueries ?: null,
+            ], fn ($value) => $value !== null),
             'timestamp' => now()->format('Y-m-d\TH:i:s\Z'),
         ]);
 
@@ -187,6 +199,7 @@ class PerformanceMonitor
         $this->tracer = new Tracer;
         $this->rootSpan = null;
         $this->queries = [];
+        $this->droppedQueries = 0;
     }
 
     /**
@@ -262,6 +275,16 @@ class PerformanceMonitor
     public function appendQuery(string $sql, float $timeMs, array $bindings = []): void
     {
         if (! ($this->config['track_queries'] ?? false)) {
+            return;
+        }
+
+        // Cap retained queries. Overflow is counted rather than buffered so a
+        // long or unflushed trace cannot grow without bound.
+        $maxQueries = (int) ($this->config['limits']['max_queries'] ?? self::DEFAULT_MAX_QUERIES);
+
+        if ($maxQueries > 0 && count($this->queries) >= $maxQueries) {
+            $this->droppedQueries++;
+
             return;
         }
 
@@ -369,6 +392,35 @@ class PerformanceMonitor
         return count($this->queries);
     }
 
+    /**
+     * Queries retained for the current trace.
+     */
+    public function getQueries(): array
+    {
+        return $this->queries;
+    }
+
+    /**
+     * Retained queries that exceeded the slow-query threshold.
+     */
+    public function getSlowQueries(): array
+    {
+        $threshold = $this->config['thresholds']['query_time_ms'] ?? 1000;
+
+        return array_values(array_filter(
+            $this->queries,
+            fn (array $q) => ($q['time_ms'] ?? 0) >= $threshold
+        ));
+    }
+
+    /**
+     * Queries dropped in the current trace because the cap was reached.
+     */
+    public function getDroppedQueryCount(): int
+    {
+        return $this->droppedQueries;
+    }
+
     public function getSummary(): array
     {
         $spans = $this->tracer->getSpans();
@@ -378,6 +430,8 @@ class PerformanceMonitor
             'trace_id' => $this->tracer->getTraceId(),
             'query_count' => count($this->queries),
             'span_count' => count($spans),
+            'dropped_span_count' => $this->tracer->getDroppedSpanCount(),
+            'dropped_query_count' => $this->droppedQueries,
             'total_duration_ms' => $durations ? array_sum($durations) : 0,
             'spans' => array_map(fn ($s) => $s->toArray(), $spans),
         ];

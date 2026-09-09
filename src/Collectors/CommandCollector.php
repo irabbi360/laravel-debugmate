@@ -2,6 +2,7 @@
 
 namespace Irabbi360\LaravelDebugMate\Collectors;
 
+use Illuminate\Support\Str;
 use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
 
 class CommandCollector implements CollectorInterface
@@ -78,8 +79,49 @@ class CommandCollector implements CollectorInterface
         }
     }
 
+    /**
+     * Commands that must never open a trace.
+     *
+     * Long-running daemons (queue:work, horizon, octane:start, ...) fire
+     * CommandStarting but only fire CommandFinished when the process exits,
+     * which can be days later. Tracing one keeps a root span open for the
+     * entire process lifetime, so:
+     *
+     *   - every span and query accumulates in memory, unbounded;
+     *   - hasActiveTrace() stays true, so JobCollector never flushes per job
+     *     and instead folds every job into the one daemon trace;
+     *   - the eventual flush emits a single enormous payload.
+     *
+     * This is the primary source of worker memory growth, so the daemon list
+     * is enforced here even if a user empties `debugmate.ignore_commands`.
+     */
+    protected const ALWAYS_SKIPPED_COMMANDS = [
+        'queue:work',
+        'queue:listen',
+        'horizon',
+        'horizon:work',
+        'horizon:supervisor',
+        'schedule:work',
+        'octane:start',
+        'reverb:start',
+        'websockets:serve',
+        'pail',
+        'serve',
+    ];
+
     protected function shouldSkipCommand(string $commandName): bool
     {
-        return in_array($commandName, ['list', 'help', 'clear-compiled'], true);
+        $patterns = array_merge(
+            self::ALWAYS_SKIPPED_COMMANDS,
+            (array) config('debugmate.ignore_commands', []),
+        );
+
+        foreach ($patterns as $pattern) {
+            if (Str::is($pattern, $commandName)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

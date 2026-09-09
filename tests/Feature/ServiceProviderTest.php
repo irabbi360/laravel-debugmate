@@ -19,6 +19,6 @@ class ServiceProviderTest extends TestCase
     {
         $this->assertTrue(config('debugmate.enabled'));
         $this->assertSame(3, config('debugmate.job_retries'));
-        $this->assertSame(1048576, config('debugmate.max_payload_size'));
+        $this->assertSame(262144, config('debugmate.max_payload_size'));
     }
 }

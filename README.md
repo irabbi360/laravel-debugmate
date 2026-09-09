@@ -125,6 +125,38 @@ php artisan vendor:publish --tag=config --provider="Irabbi360\LaravelDebugMate\D
 
 Key env vars: `DEBUGMATE_ENABLED`, `DEBUGMATE_API_URL`, `DEBUGMATE_PROJECT_KEY`, `DEBUGMATE_TRACK_*`, `DEBUGMATE_ASYNC_REPORTING`.
 
+### What is never traced
+
+Three exclusion lists keep the SDK from measuring itself. Each is a plain array
+in `config/debugmate.php` and supports `*` wildcards.
+
+| Key | Excludes | Why |
+| --- | --- | --- |
+| `ignore_paths` | HTTP paths | Skips DebugMate's own ingest endpoints. |
+| `ignore_commands` | Artisan commands | **Long-running daemons must stay listed.** A daemon fires `CommandStarting` but not `CommandFinished` until it exits, so tracing one keeps a root span open for the life of the process and the worker leaks memory. `queue:work`, `horizon*`, `octane:start` and friends are enforced in code and cannot be re-enabled. |
+| `ignore_tables` | Database tables | Stops writing telemetry from generating telemetry. Covers the queue tables, `sessions`, `cache`, and DebugMate's own ingest tables — essential when an app reports to a DebugMate instance sharing its database. |
+
+### Trace limits
+
+Every trace is capped so a single request, job, or bug cannot exhaust memory:
+
+```env
+DEBUGMATE_MAX_SPANS=500          # 0 disables the cap
+DEBUGMATE_MAX_QUERIES=200        # 0 disables the cap
+DEBUGMATE_MAX_PAYLOAD_SIZE=262144
+```
+
+Overflow is counted rather than buffered. When a trace is truncated, the metric
+payload carries `dropped_spans` / `dropped_queries` in its context so the gap is
+visible rather than silent.
+
+### Reporting to a DebugMate instance on the same database
+
+If you self-host DebugMate and point an app at it, give the SDK its own queue
+connection (Redis, for example) so telemetry jobs do not write rows into the
+database they are measuring. `ignore_tables` covers the query-tracking half of
+the loop; a separate connection covers the rest.
+
 ## Testing
 
 ```bash

@@ -3,6 +3,7 @@
 namespace Irabbi360\LaravelDebugMate\Collectors;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
 
 /**
@@ -13,10 +14,15 @@ use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
  * - Captures SQL statements and query bindings
  * - Detects slow queries based on configured threshold
  * - Creates spans for each query in the trace
+ *
+ * Recorded queries live on the PerformanceMonitor, which resets them on every
+ * trace start and flush. The collector deliberately keeps no copy of its own:
+ * DB::listen is registered once per process and the collector is never told
+ * when a request or job ends, so any buffer it owned would grow for the whole
+ * process lifetime.
  */
 class QueryCollector implements CollectorInterface
 {
-    protected array $queries = [];
     protected float $slowThreshold = 1000; // ms
 
     public function __construct(protected PerformanceMonitor $monitor)
@@ -54,6 +60,20 @@ class QueryCollector implements CollectorInterface
     protected function recordQuery($queryObj): void
     {
         $sql = $queryObj->sql ?? '';
+
+        // No active trace means nothing will ever flush this span. Recording it
+        // would leak: a queue worker polling the `jobs` table emits a query per
+        // second between jobs, forever.
+        if (! $this->monitor->hasActiveTrace()) {
+            return;
+        }
+
+        // Never trace writes to telemetry or queue infrastructure - doing so
+        // makes reporting generate more to report.
+        if ($this->shouldIgnoreQuery($sql)) {
+            return;
+        }
+
         $timeMs = $queryObj->time ?? 0;
         $bindings = $queryObj->bindings ?? [];
 
@@ -75,19 +95,61 @@ class QueryCollector implements CollectorInterface
             $span->setAttribute('db.threshold_ms', $this->slowThreshold);
         }
 
-        // Record in query list
-        $this->queries[] = [
-            'sql' => $sql,
-            'bindings' => $bindings,
-            'time_ms' => $timeMs,
-            'operation' => $operation,
-            'slow' => $timeMs >= $this->slowThreshold,
-        ];
-
         // Persist query data for the final performance payload
         $this->monitor->appendQuery($sql, $timeMs, $bindings);
 
         $this->monitor->endSpan($span);
+    }
+
+    /**
+     * Whether this SQL touches a table excluded from tracking.
+     */
+    public function shouldIgnoreQuery(string $sql): bool
+    {
+        $patterns = (array) config('debugmate.ignore_tables', []);
+
+        if (empty($patterns)) {
+            return false;
+        }
+
+        foreach ($this->extractTables($sql) as $table) {
+            foreach ($patterns as $pattern) {
+                if (Str::is($pattern, $table)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Extract the table names referenced by a SQL statement.
+     *
+     * @return array<int, string>
+     */
+    protected function extractTables(string $sql): array
+    {
+        // One identifier, optionally quoted with backticks, double quotes or
+        // brackets. `table` covers CREATE/ALTER/TRUNCATE TABLE.
+        $identifier = '(?:["`\[]?[a-zA-Z0-9_$]+["`\]]?)';
+
+        $matched = preg_match_all(
+            '/\b(?:from|into|update|join|table)\s+((?:'.$identifier.'\s*\.\s*)*'.$identifier.')/i',
+            $sql,
+            $matches
+        );
+
+        if (! $matched) {
+            return [];
+        }
+
+        return array_map(static function (string $table): string {
+            // Drop any schema/database qualifier: `mydb`.`jobs` -> jobs
+            $parts = explode('.', $table);
+
+            return strtolower(trim((string) end($parts), " \t\n\r\0\x0B\"`[]"));
+        }, $matches[1]);
     }
 
     /**
@@ -132,35 +194,34 @@ class QueryCollector implements CollectorInterface
     }
 
     /**
-     * Get recorded queries.
+     * Get recorded queries for the current trace.
      */
     public function getQueries(): array
     {
-        return $this->queries;
+        return $this->monitor->getQueries();
     }
 
     /**
-     * Get slow queries.
+     * Get slow queries for the current trace.
      */
     public function getSlowQueries(): array
     {
-        return array_filter($this->queries, fn($q) => $q['slow']);
+        return $this->monitor->getSlowQueries();
     }
 
     /**
-     * Get query count.
+     * Get query count for the current trace.
      */
     public function getQueryCount(): int
     {
-        return count($this->queries);
+        return $this->monitor->getQueryCount();
     }
 
     /**
-     * Get slow query count.
+     * Get slow query count for the current trace.
      */
     public function getSlowQueryCount(): int
     {
         return count($this->getSlowQueries());
     }
 }
-

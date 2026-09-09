@@ -10,15 +10,37 @@ class Tracer
     public const TRACE_FLAG_SAMPLED = 0x01;
     public const TRACE_FLAG_NOT_SAMPLED = 0x00;
 
+    /** Fallback cap when config is unavailable (e.g. Tracer used outside Laravel). */
+    public const DEFAULT_MAX_SPANS = 500;
+
     protected string $traceId;
     protected int $traceFlags = self::TRACE_FLAG_SAMPLED;
     protected array $spanStack = [];
     protected array $allSpans = [];
+    protected int $maxSpans;
+    protected int $droppedSpans = 0;
 
-    public function __construct(?string $traceId = null, int $traceFlags = self::TRACE_FLAG_SAMPLED)
+    public function __construct(?string $traceId = null, int $traceFlags = self::TRACE_FLAG_SAMPLED, ?int $maxSpans = null)
     {
         $this->traceId = $traceId ?? $this->generateTraceId();
         $this->traceFlags = $traceFlags;
+        $this->maxSpans = $maxSpans ?? $this->resolveMaxSpans();
+    }
+
+    /**
+     * Resolve the span cap from config, tolerating a bare (non-Laravel) context.
+     */
+    protected function resolveMaxSpans(): int
+    {
+        if (! function_exists('config')) {
+            return self::DEFAULT_MAX_SPANS;
+        }
+
+        try {
+            return (int) config('debugmate.limits.max_spans', self::DEFAULT_MAX_SPANS);
+        } catch (\Throwable) {
+            return self::DEFAULT_MAX_SPANS;
+        }
     }
 
     /**
@@ -34,9 +56,34 @@ class Tracer
         }
 
         $this->spanStack[] = $span;
-        $this->allSpans[] = $span;
+
+        // Retain the span only while under the cap. Overflow is counted rather
+        // than buffered, so an unflushed trace can never exhaust memory. The
+        // span is still pushed onto the stack so parent/child nesting and
+        // endSpan() stay balanced.
+        if ($this->maxSpans <= 0 || count($this->allSpans) < $this->maxSpans) {
+            $this->allSpans[] = $span;
+        } else {
+            $this->droppedSpans++;
+        }
 
         return $span;
+    }
+
+    /**
+     * Number of spans dropped because the cap was reached.
+     */
+    public function getDroppedSpanCount(): int
+    {
+        return $this->droppedSpans;
+    }
+
+    /**
+     * The configured span cap for this trace.
+     */
+    public function getMaxSpans(): int
+    {
+        return $this->maxSpans;
     }
 
     /**
@@ -149,6 +196,7 @@ class Tracer
             'trace_flags' => $this->traceFlags,
             'is_sampled' => $this->isSampled(),
             'spans' => array_map(fn($s) => $s->toArray(), $this->allSpans),
+            'dropped_spans' => $this->droppedSpans,
         ];
     }
 

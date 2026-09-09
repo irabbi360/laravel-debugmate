@@ -7,6 +7,7 @@ use Irabbi360\LaravelDebugMate\Support\InternalLog;
 use Irabbi360\LaravelDebugMate\Jobs\ReportLogJob;
 use Irabbi360\LaravelDebugMate\Jobs\ReportMetricJob;
 use Irabbi360\LaravelDebugMate\Jobs\ReportAnalyticsJob;
+use Irabbi360\LaravelDebugMate\Support\PayloadLimiter;
 
 /**
  * AsyncDispatch - Trait for handling asynchronous job dispatching
@@ -21,7 +22,7 @@ trait AsyncDispatch
     public function dispatchErrorReport(array $errorData): void
     {
         try {
-            dispatch(new ReportErrorJob($errorData))
+            dispatch(new ReportErrorJob($this->limitPayload($errorData)))
                 ->onQueue($this->getQueueName('errors'));
         } catch (\Exception $e) {
             InternalLog::error('DebugMate: Failed to dispatch error reporting job', [
@@ -37,7 +38,7 @@ trait AsyncDispatch
     public function dispatchLogReport(array $logData): void
     {
         try {
-            dispatch(new ReportLogJob($logData))
+            dispatch(new ReportLogJob($this->limitPayload($logData)))
                 ->onQueue($this->getQueueName('logs'));
         } catch (\Exception $e) {
             InternalLog::error('DebugMate: Failed to dispatch log reporting job', [
@@ -53,7 +54,7 @@ trait AsyncDispatch
     public function dispatchMetricReport(array $metricData): void
     {
         try {
-            dispatch(new ReportMetricJob($metricData))
+            dispatch(new ReportMetricJob($this->limitPayload($metricData)))
                 ->onQueue($this->getQueueName('metrics'));
         } catch (\Exception $e) {
             InternalLog::error('DebugMate: Failed to dispatch metric reporting job', [
@@ -69,13 +70,34 @@ trait AsyncDispatch
     public function dispatchAnalyticsReport(array $analyticsData): void
     {
         try {
-            dispatch(new ReportAnalyticsJob($analyticsData))
+            dispatch(new ReportAnalyticsJob($this->limitPayload($analyticsData)))
                 ->onQueue($this->getQueueName('analytics'));
         } catch (\Exception $e) {
             InternalLog::error('DebugMate: Failed to dispatch analytics reporting job', [
                 'error' => $e->getMessage(),
             ]);
             $this->handleDispatchFailure('analytics', $analyticsData);
+        }
+    }
+
+    /**
+     * Shrink a payload to the configured byte limit before it is queued.
+     *
+     * ApiClient also trims before sending, but that is too late for a database
+     * queue: the untrimmed array is serialized into `jobs.payload` first, so an
+     * oversized trace is written to the database whether or not it is ever
+     * delivered.
+     */
+    protected function limitPayload(array $payload): array
+    {
+        try {
+            return (new PayloadLimiter)->fit($payload);
+        } catch (\Throwable $e) {
+            InternalLog::debug('DebugMate: Failed to limit payload before dispatch', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return $payload;
         }
     }
 
@@ -103,7 +125,7 @@ trait AsyncDispatch
     public function dispatchWithDelay(string $jobClass, array $data, int $seconds): void
     {
         try {
-            dispatch(new $jobClass($data))
+            dispatch(new $jobClass($this->limitPayload($data)))
                 ->onQueue($this->getQueueName('default'))
                 ->delay(now()->addSeconds($seconds));
         } catch (\Exception $e) {
@@ -119,7 +141,7 @@ trait AsyncDispatch
     public function dispatchBatch(string $jobClass, array $items, string $type = 'default'): void
     {
         try {
-            $jobs = array_map(fn($item) => new $jobClass($item), $items);
+            $jobs = array_map(fn($item) => new $jobClass($this->limitPayload($item)), $items);
             dispatch($jobs);
         } catch (\Exception $e) {
             InternalLog::error('DebugMate: Failed to batch dispatch jobs', [

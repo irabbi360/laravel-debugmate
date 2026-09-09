@@ -1,5 +1,85 @@
 # DebugMate SDK Changelog
 
+## [2.1.0] - September 8, 2026
+
+### 🐛 Critical Fixes — worker memory leak & self-ingest amplification
+
+Three defects combined to make a `queue:work` worker grow without bound and to
+let a self-hosted DebugMate flood its own database.
+
+#### 1. Daemon commands opened a trace that was never flushed
+
+`CommandCollector` skipped only `list`, `help` and `clear-compiled`, so
+`queue:work` — a daemon — fired `CommandStarting` and opened a root span that
+stayed open until the process exited, potentially days later. Consequences:
+
+- `Tracer::$allSpans` and `PerformanceMonitor::$queries` accumulated for the
+  entire process lifetime.
+- `hasActiveTrace()` stayed `true`, so `JobCollector` never flushed per job and
+  folded every job into the single daemon trace instead.
+- With the `database` queue driver the worker polls `jobs` every second, so it
+  leaked roughly 86k spans/day even with zero traffic.
+- The eventual flush emitted one enormous payload into `performance_monitors`.
+
+**Fixed:** `shouldSkipCommand()` now matches the new `debugmate.ignore_commands`
+config (wildcards supported). Known daemons — `queue:work`, `queue:listen`,
+`horizon*`, `schedule:work`, `octane:start`, `reverb:start`, `websockets:serve`,
+`pail`, `serve` — are additionally hardcoded in
+`CommandCollector::ALWAYS_SKIPPED_COMMANDS` and cannot be re-enabled by config.
+`schedule:run`, `schedule:finish` and `debugmate:*` are ignored by default too.
+
+#### 2. `QueryCollector` recorded queries with no trace to flush them into
+
+`recordQuery()` created a span for every query unconditionally, including
+queries emitted while no request or job was active — those spans could never be
+flushed, so they were pure leak. The collector also kept its **own**
+`$queries` array of full SQL plus bindings that nothing ever reset.
+
+**Fixed:** queries are ignored when `hasActiveTrace()` is `false`, and the
+duplicate buffer is gone. Recorded queries now live solely on
+`PerformanceMonitor`, which resets them on every trace start and flush.
+`getQueries()`, `getSlowQueries()`, `getQueryCount()` and `getSlowQueryCount()`
+are retained and delegate to the monitor.
+
+#### 3. Writing telemetry generated more telemetry
+
+When an app reports to a DebugMate instance backed by the same database, each
+`INSERT` into `jobs` or `performance_monitors` was itself recorded as a query
+span, enlarging the next payload, which caused more writes. `ignore_paths` did
+not help: it only guards the inbound HTTP leg in `TrackPerformance`.
+
+**Fixed:** new `debugmate.ignore_tables` config (wildcards supported) excludes
+queue and framework infrastructure (`jobs`, `job_batches`, `failed_jobs`,
+`sessions`, `cache`, `cache_locks`), DebugMate's own ingest tables and
+`telescope_*`. Table names are parsed from the SQL and schema qualifiers are
+stripped, so `` `mydb`.`jobs` `` matches while `jobs_archive` does not.
+
+### 🛡️ Hardening
+
+- **Hard caps per trace.** New `debugmate.limits.max_spans` (default 500) and
+  `debugmate.limits.max_queries` (default 200). Overflow is counted, never
+  buffered, so even an unflushed trace cannot exhaust memory. Set either to `0`
+  to disable. Drop counts surface as `dropped_spans` / `dropped_queries` in the
+  metric payload context and in `getSummary()`, so a truncated trace is visibly
+  truncated instead of silently incomplete.
+- **Payloads are trimmed before queueing.** `PayloadLimiter` previously ran only
+  inside `ApiClient`, which is too late for a database queue — the untrimmed
+  array was already serialized into `jobs.payload`. All dispatchers in
+  `AsyncDispatch` now trim first.
+- **`max_payload_size` default lowered from 1 MB to 256 KB.** Override with
+  `DEBUGMATE_MAX_PAYLOAD_SIZE`.
+
+### ⚠️ Upgrade notes
+
+- Republish the config (`php artisan vendor:publish --tag=debugmate-config
+  --force`) or merge the new `ignore_commands`, `ignore_tables` and `limits`
+  keys into your existing `config/debugmate.php`.
+- Performance metrics for `queue:work` and `schedule:run` are no longer
+  reported. Per-job metrics still are, and are now correctly scoped to each job
+  rather than merged into one daemon trace.
+- Traces exceeding the new caps are truncated. Raise `DEBUGMATE_MAX_SPANS` /
+  `DEBUGMATE_MAX_QUERIES` if you need deeper traces.
+
 ## [2.0.0] - May 3, 2026
 
 ### 🎉 Major Updates
