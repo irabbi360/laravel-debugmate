@@ -29,9 +29,23 @@ trait RetriesApiReporting
 
     protected function assertReported(bool $success, string $type): void
     {
-        if (! $success) {
+        if ($success) {
+            return;
+        }
+
+        // Retry while attempts remain. On the last attempt, give up quietly
+        // instead of throwing: a thrown job is copied, payload and all, into
+        // failed_jobs, where report data (URLs, user ids, context) would be
+        // retained indefinitely.
+        $attempts = method_exists($this, 'attempts') ? (int) $this->attempts() : 1;
+
+        if ($attempts < $this->tries()) {
             throw new RuntimeException("DebugMate {$type} report failed");
         }
+
+        InternalLog::warning("DebugMate: {$type} report dropped after {$attempts} attempt(s)", [
+            'job' => static::class,
+        ]);
     }
 
     public function failed(?\Throwable $exception): void

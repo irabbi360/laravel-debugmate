@@ -16,6 +16,12 @@ trait CaptureRequestData
 
     abstract public function sanitizeQueryString(?string $query): ?string;
 
+    abstract public function sanitizeIp(?string $ip): ?string;
+
+    abstract public function sanitizeIpHeaders(array $headers): array;
+
+    abstract public function sanitizeRequestUrl(\Illuminate\Http\Request $request, bool $withQuery = true): string;
+
     /**
      * Capture request data from current request.
      */
@@ -27,11 +33,11 @@ trait CaptureRequestData
 
         return [
             'method' => request()->method(),
-            'path' => request()->path(),
-            'url' => request()->url(),
-            'full_url' => $this->sanitizeUrl(request()->fullUrl()),
+            'path' => ltrim((string) parse_url($this->sanitizeRequestUrl(request(), false), PHP_URL_PATH), '/'),
+            'url' => $this->sanitizeRequestUrl(request(), false),
+            'full_url' => $this->sanitizeRequestUrl(request()),
             'query_string' => $this->sanitizeQueryString(request()->getQueryString()),
-            'ip_address' => request()->ip(),
+            'ip_address' => $this->sanitizeIp(request()->ip()),
             'user_agent' => request()->userAgent(),
             'accept_language' => request()->header('Accept-Language'),
             'referrer' => $this->sanitizeUrl(request()->header('Referer')),
@@ -60,7 +66,7 @@ trait CaptureRequestData
 
         // Drops authorization, cookie, php-auth-*, x-*-token, x-api-key, ...
         return array_filter(
-            $this->sanitizeData($headers),
+            $this->sanitizeData($this->sanitizeIpHeaders($headers)),
             fn ($value) => $value !== '***SANITIZED***'
         );
     }
@@ -107,7 +113,7 @@ trait CaptureRequestData
             $user = null;
         }
 
-        $sendPii = (bool) config('debugmate.send_user_pii', true);
+        $sendPii = (bool) config('debugmate.send_user_pii', false);
 
         return [
             'request_data' => $this->captureRequestData(),

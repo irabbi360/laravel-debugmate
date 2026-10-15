@@ -110,7 +110,7 @@ class ErrorTracker
                 $errorData = ErrorDataDTO::from(array_merge([
                     'trace_id' => $traceId ?? Str::uuid()->toString(),
                     'error_type' => $type,
-                    'message' => $message,
+                    'message' => (string) $this->sanitizeMessage($message),
                     'file' => $context['file'] ?? 'unknown',
                     'line' => $context['line'] ?? 0,
                     'code' => $context['code'] ?? 0,
@@ -131,18 +131,27 @@ class ErrorTracker
     }
 
     /**
-     * QueryException messages embed the SQL with its bound values (emails,
-     * hashes, tokens). Rebuild the message from the placeholder SQL instead.
+     * Exception message with secrets and personal data removed.
+     *
+     * QueryException messages embed the SQL with its bound values, and driver
+     * messages repeat offending values ("Duplicate entry 'a@b.c' ..."), so the
+     * message is rebuilt from the placeholder SQL plus a scrubbed driver message.
+     * Other messages (e.g. Guzzle's, which include the full request URL) are
+     * scrubbed for URLs, key=value secrets and credential-shaped strings.
      */
     protected function safeExceptionMessage(Throwable $exception): string
     {
         if ($exception instanceof QueryException) {
             $driverMessage = $exception->getPrevious()?->getMessage() ?? 'Database error';
 
-            return $driverMessage.' (SQL: '.$exception->getSql().')';
+            return $this->sanitizeDatabaseMessage($driverMessage).' (SQL: '.$this->sanitizeQuery($exception->getSql()).')';
         }
 
-        return $exception->getMessage();
+        if ($exception instanceof \PDOException) {
+            return (string) $this->sanitizeDatabaseMessage($exception->getMessage());
+        }
+
+        return (string) $this->sanitizeMessage($exception->getMessage());
     }
 
     /**
@@ -158,9 +167,9 @@ class ErrorTracker
 
         return [
             'user_id' => $this->safeUserId(),
-            'url' => $this->sanitizeUrl($request->url()),
+            'url' => $this->sanitizeRequestUrl($request, false),
             'user_agent' => $request->userAgent(),
-            'ip_address' => $request->ip(),
+            'ip_address' => $this->sanitizeIp($request->ip()),
             'method' => $request->method(),
         ];
     }

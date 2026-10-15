@@ -49,7 +49,7 @@ class ContextCollector
         return [
             'method' => $request->method(),
             'path' => $request->path(),
-            'full_url' => $this->sanitizeUrl($request->fullUrl()),
+            'full_url' => $this->sanitizeRequestUrl($request),
             'route_name' => $route?->getName() ?? null,
             'route_action' => $route?->getActionName() ?? null,
             'controller' => $route?->getControllerClass() ?? null,
@@ -69,7 +69,7 @@ class ContextCollector
 
         return [
             'user_agent' => $userAgent,
-            'ip_address' => $request->ip(),
+            'ip_address' => $this->sanitizeIp($request->ip()),
             'is_ajax' => $request->ajax(),
             'is_json' => $request->isJson(),
             'is_secure' => $request->secure(),
@@ -106,7 +106,7 @@ class ContextCollector
             $headers['referer'] = $this->sanitizeUrl($headers['referer']);
         }
 
-        return $this->sanitizeData($headers);
+        return $this->sanitizeData($this->sanitizeIpHeaders($headers));
     }
 
     /**
@@ -196,7 +196,7 @@ class ContextCollector
             'guard' => auth()->getDefaultDriver(),
         ];
 
-        if ((bool) config('debugmate.send_user_pii', true)) {
+        if ((bool) config('debugmate.send_user_pii', false)) {
             $info['name'] = $user->name ?? null;
             $info['email'] = $user->email ?? null;
         }
@@ -345,7 +345,7 @@ class ContextCollector
         $processed = [];
         foreach ($queryLog as $query) {
             $processed[] = [
-                'query' => $query['query'],
+                'query' => $this->sanitizeQuery((string) $query['query']),
                 'bindings' => $this->sanitizeBindings($query['bindings'] ?? []),
                 'time' => $query['time'] ?? 0,
             ];

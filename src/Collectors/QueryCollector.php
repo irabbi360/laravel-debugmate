@@ -186,7 +186,9 @@ class QueryCollector implements CollectorInterface
      */
     protected function sanitizeSql(string $sql): string
     {
-        // Remove query parameters and truncate if too long
+        $sql = \Irabbi360\LaravelDebugMate\Support\Sanitizer::instance()->sanitizeQuery($sql);
+
+        // Truncate if too long
         $maxLength = 500;
         if (strlen($sql) > $maxLength) {
             return substr($sql, 0, $maxLength) . '...';

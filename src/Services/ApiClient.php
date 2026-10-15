@@ -3,7 +3,9 @@
 namespace Irabbi360\LaravelDebugMate\Services;
 
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\GuzzleException;
+use Illuminate\Support\Facades\Cache;
 use GuzzleHttp\Exception\RequestException;
 use Irabbi360\LaravelDebugMate\Support\InternalLog;
 use Irabbi360\LaravelDebugMate\Support\PayloadLimiter;
@@ -16,6 +18,11 @@ class ApiClient
 
     protected static bool $insecureWarningLogged = false;
 
+    /** Circuit breaker: unix time until which the API is considered down (this process). */
+    protected static float $circuitOpenUntil = 0.0;
+
+    protected const CIRCUIT_CACHE_KEY = 'debugmate:api_circuit_open_until';
+
     public function __construct(string $apiUrl, string $debugmateKey)
     {
         $this->apiUrl = rtrim($apiUrl, '/');
@@ -23,7 +30,13 @@ class ApiClient
 
         $this->client = new Client([
             'base_uri' => $this->apiUrl,
-            'timeout' => config('debugmate.request_timeout', 10),
+            'timeout' => (float) config('debugmate.request_timeout', 5),
+            'connect_timeout' => (float) config('debugmate.connect_timeout', 2),
+            // Never follow redirects: Guzzle strips only Authorization/Cookie on
+            // cross-origin redirects, so X-DebugMate-Key would be forwarded to
+            // the redirect target (and https -> http downgrades are allowed).
+            'allow_redirects' => false,
+            'verify' => true,
         ]);
     }
 
@@ -170,6 +183,20 @@ class ApiClient
             return false;
         }
 
+        if ($this->apiUrl === '') {
+            InternalLog::warning('DebugMate API URL is not configured. Set DEBUGMATE_API_URL in .env', [
+                'endpoint' => $endpoint,
+            ]);
+
+            return false;
+        }
+
+        // The API recently failed to connect: fail fast instead of making
+        // every request wait for another timeout.
+        if ($this->circuitIsOpen()) {
+            return false;
+        }
+
         $this->warnIfInsecureTransport();
 
         try {
@@ -189,15 +216,24 @@ class ApiClient
                 return true;
             }
 
-            InternalLog::warning('DebugMate API returned non-success status', [
-                'status_code' => $response->getStatusCode(),
+            $status = $response->getStatusCode();
+
+            InternalLog::warning('DebugMate API returned non-success status', array_filter([
+                'status_code' => $status,
                 'endpoint' => $endpoint,
-            ]);
+                'hint' => $status >= 300 && $status < 400
+                    ? 'Redirects are not followed (they could leak the project key). Point DEBUGMATE_API_URL at the final URL, e.g. https:// instead of http://.'
+                    : null,
+            ]));
 
             return false;
         } catch (\Throwable $e) {
             // Any failure (connection refused, DNS, timeout, bad response,
             // JSON encoding) must never break the host application.
+            if ($e instanceof ConnectException) {
+                $this->openCircuit();
+            }
+
             InternalLog::error('DebugMate API request failed', [
                 'endpoint' => $endpoint,
                 'error' => $e->getMessage(),
@@ -205,6 +241,64 @@ class ApiClient
             ]);
 
             return false;
+        }
+    }
+
+    protected function circuitIsOpen(): bool
+    {
+        $now = microtime(true);
+
+        if (static::$circuitOpenUntil > $now) {
+            return true;
+        }
+
+        try {
+            $sharedUntil = (float) Cache::get(self::CIRCUIT_CACHE_KEY, 0);
+        } catch (\Throwable) {
+            return false;
+        }
+
+        if ($sharedUntil > $now) {
+            static::$circuitOpenUntil = $sharedUntil;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Stop calling the API for a while; shared through the cache so every
+     * PHP-FPM worker / queue worker backs off together.
+     */
+    protected function openCircuit(): void
+    {
+        $seconds = (int) config('debugmate.circuit_breaker_seconds', 30);
+
+        if ($seconds <= 0) {
+            return;
+        }
+
+        static::$circuitOpenUntil = microtime(true) + $seconds;
+
+        try {
+            Cache::put(self::CIRCUIT_CACHE_KEY, static::$circuitOpenUntil, $seconds);
+        } catch (\Throwable) {
+            // cache unavailable - the per-process breaker still applies
+        }
+    }
+
+    /**
+     * Close the circuit (used by tests and after configuration changes).
+     */
+    public static function resetCircuit(): void
+    {
+        static::$circuitOpenUntil = 0.0;
+
+        try {
+            Cache::forget(self::CIRCUIT_CACHE_KEY);
+        } catch (\Throwable) {
+            // ignore
         }
     }
 

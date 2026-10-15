@@ -5,6 +5,7 @@ namespace Irabbi360\LaravelDebugMate\Http\Middleware;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cookie;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 use Irabbi360\LaravelDebugMate\DTO\DeviceDataDTO;
 use Irabbi360\LaravelDebugMate\DTO\GeoLocationDataDTO;
@@ -28,6 +29,19 @@ class TrackAnalytics
 
     protected GeoLocation $geoLocation;
 
+    /** @var (Closure(Request): bool)|null */
+    protected static ?Closure $consentResolver = null;
+
+    /**
+     * Decide per request whether the visitor consented to analytics, e.g.
+     * TrackAnalytics::resolveConsentUsing(fn (Request $r) => $r->cookie('cookie_consent') === 'all');
+     * Pass null to remove the resolver.
+     */
+    public static function resolveConsentUsing(?Closure $resolver): void
+    {
+        static::$consentResolver = $resolver;
+    }
+
     public function __construct(RequestAnalytics $analytics, BotDetector $botDetector, GeoLocation $geoLocation)
     {
         $this->analytics = $analytics;
@@ -37,7 +51,10 @@ class TrackAnalytics
 
     public function handle(Request $request, Closure $next): Response
     {
-        if (! config('debugmate.track_analytics', false) || $this->shouldIgnorePath($request->path())) {
+        if (! config('debugmate.track_analytics', false)
+            || ! $this->isTrackablePageRequest($request)
+            || $this->shouldIgnorePath($request->path())
+            || ! $this->hasConsent($request)) {
             return $next($request);
         }
 
@@ -62,7 +79,7 @@ class TrackAnalytics
 
         try {
             $this->analytics->trackPageView([
-                'url' => $this->analytics->sanitizeUrl($request->fullUrl()),
+                'url' => $this->analytics->sanitizeRequestUrl($request),
                 'title' => Str::limit((string) ($request->header('X-Page-Title') ?? $request->route()?->getName() ?? ''), 255, '') ?: null,
                 'referrer' => $this->analytics->resolveExternalReferrer($request->headers->get('referer')),
                 'load_time_ms' => $loadTimeMs,
@@ -109,12 +126,31 @@ class TrackAnalytics
             return null;
         }
 
-        $deviceData = DeviceDataDTO::from($this->parseUserAgent($userAgent));
-
         $ipAddress = $request->ip();
         if (config('debugmate.analytics.anonymize_ips', true)) {
             $ipAddress = IpAnonymizer::anonymize($ipAddress);
         }
+
+        // Returning visitor: continue the session. No cache writes, geo lookups
+        // or rate-limit checks beyond the session lookup itself.
+        $existingSessionId = $request->cookie(self::SESSION_COOKIE);
+        if (is_string($existingSessionId)
+            && Str::isUuid($existingSessionId)
+            && $this->analytics->resumeSession($existingSessionId, ['user_id' => $this->safeUserId()])) {
+            $request->attributes->set('debugmate_session_id', $existingSessionId);
+            $request->attributes->set('debugmate_is_bot', $isBot);
+
+            return $existingSessionId;
+        }
+
+        // New session: every one costs a cache entry and API reports, so
+        // sample and rate-limit them - cookieless clients (scripts, scanners)
+        // would otherwise create one per request.
+        if (! $this->passesSampleRate() || ! $this->withinNewSessionLimit((string) $ipAddress)) {
+            return null;
+        }
+
+        $deviceData = DeviceDataDTO::from($this->parseUserAgent($userAgent));
 
         // The (anonymized) IP is what leaves the app - including to the
         // geolocation provider. A /24 still resolves country and city.
@@ -139,20 +175,70 @@ class TrackAnalytics
             'longitude' => $geoData->longitude,
         ];
 
-        // The cookie is client-controlled: only accept a well-formed UUID.
-        $existingSessionId = $request->cookie(self::SESSION_COOKIE);
-        if (is_string($existingSessionId)
-            && Str::isUuid($existingSessionId)
-            && $this->analytics->resumeSession($existingSessionId, $requestData)) {
-            $sessionId = $existingSessionId;
-        } else {
-            $sessionId = $this->analytics->startSession($requestData);
-        }
+        $sessionId = $this->analytics->startSession($requestData);
 
         $request->attributes->set('debugmate_session_id', $sessionId);
         $request->attributes->set('debugmate_is_bot', $isBot);
 
         return $sessionId;
+    }
+
+    /**
+     * Only real page loads are analytics: GET, not JSON / XHR API calls, not
+     * browser prefetches. (Inertia visits send Accept: text/html and count.)
+     */
+    protected function isTrackablePageRequest(Request $request): bool
+    {
+        if (! $request->isMethod('GET') || $request->expectsJson()) {
+            return false;
+        }
+
+        $purpose = strtolower((string) ($request->header('Sec-Purpose') ?? $request->header('Purpose') ?? ''));
+
+        return ! str_contains($purpose, 'prefetch') && ! str_contains($purpose, 'prerender');
+    }
+
+    protected function hasConsent(Request $request): bool
+    {
+        if (static::$consentResolver !== null) {
+            try {
+                return (bool) (static::$consentResolver)($request);
+            } catch (\Throwable) {
+                return false;
+            }
+        }
+
+        $consentCookie = config('debugmate.analytics.consent_cookie');
+
+        if (! is_string($consentCookie) || $consentCookie === '') {
+            return true;
+        }
+
+        $value = $request->cookie($consentCookie);
+
+        return $value !== null && ! in_array(strtolower((string) $value), ['', '0', 'false', 'no', 'deny', 'denied'], true);
+    }
+
+    protected function passesSampleRate(): bool
+    {
+        $rate = (float) config('debugmate.analytics.sample_rate', 1.0);
+
+        return $rate >= 1.0 || (mt_rand() / mt_getrandmax()) < $rate;
+    }
+
+    protected function withinNewSessionLimit(string $ipAddress): bool
+    {
+        $limit = (int) config('debugmate.analytics.max_new_sessions_per_minute', 30);
+
+        if ($limit <= 0) {
+            return true;
+        }
+
+        try {
+            return RateLimiter::attempt('debugmate-analytics:'.sha1($ipAddress), $limit, fn () => true, 60) !== false;
+        } catch (\Throwable) {
+            return true; // cache unavailable - don't block tracking on it
+        }
     }
 
     protected function safeUserId(): mixed

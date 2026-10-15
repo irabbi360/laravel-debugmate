@@ -15,7 +15,7 @@ return [
     /**
      * DebugMate API URL
      */
-    'api_url' => env('DEBUGMATE_API_URL', 'http://localhost:8000'),
+    'api_url' => env('DEBUGMATE_API_URL', 'https://debugmate.devstarit.com'),
 
     /**
      * Project Key (identifies your application)
@@ -176,12 +176,16 @@ return [
      *
      * - redact_query_bindings: replace string query bindings with "***" before
      *   they leave the app (numbers / booleans / nulls are kept).
-     * - send_user_pii: include the authenticated user's name and email.
+     * - send_user_pii: include the authenticated user's name and email
+     *   (off by default - personal data under GDPR).
+     * - anonymize_ips: truncate client IPs in errors, logs and analytics
+     *   (IPv4 -> a.b.c.0, IPv6 -> /48), including X-Forwarded-For style headers.
      * - sensitive_keys: extra key fragments to mask (in addition to the
      *   built-in list of password / token / secret / cookie / ... keys).
      */
     'redact_query_bindings' => env('DEBUGMATE_REDACT_QUERY_BINDINGS', true),
-    'send_user_pii' => env('DEBUGMATE_SEND_USER_PII', true),
+    'send_user_pii' => env('DEBUGMATE_SEND_USER_PII', false),
+    'anonymize_ips' => env('DEBUGMATE_ANONYMIZE_IPS', true),
     'sensitive_keys' => [
         // 'national_id',
     ],
@@ -251,7 +255,14 @@ return [
     /**
      * Request timeout (in seconds)
      */
-    'request_timeout' => 10,
+    'request_timeout' => (float) env('DEBUGMATE_REQUEST_TIMEOUT', 5),
+    'connect_timeout' => (float) env('DEBUGMATE_CONNECT_TIMEOUT', 2),
+
+    /**
+     * After a connection failure or timeout, stop calling the API for this
+     * many seconds so a DebugMate outage never slows every request down.
+     */
+    'circuit_breaker_seconds' => (int) env('DEBUGMATE_CIRCUIT_BREAKER_SECONDS', 30),
 
     /**
      * Enable detailed debugging
@@ -268,8 +279,15 @@ return [
         'anonymize_ips' => env('DEBUGMATE_ANONYMIZE_IPS', true),
         'bot_filtering' => env('DEBUGMATE_BOT_FILTERING', true),
         'exclude_bots' => env('DEBUGMATE_EXCLUDE_BOTS', true),
-        'retention_days' => env('DEBUGMATE_ANALYTICS_RETENTION_DAYS', 30),
+        // Fraction of NEW visitor sessions to track (existing sessions continue).
         'sample_rate' => env('DEBUGMATE_ANALYTICS_SAMPLE_RATE', 1.0),
+        // Cap on new sessions per client IP per minute; beyond it requests are
+        // not tracked (stops cache / API flooding from cookieless clients).
+        'max_new_sessions_per_minute' => (int) env('DEBUGMATE_ANALYTICS_MAX_NEW_SESSIONS', 30),
+        // Consent: when set, visitors are only tracked (and the debugmate_sid
+        // cookie is only set) if this cookie is present with a truthy value.
+        // For custom logic use TrackAnalytics::resolveConsentUsing(fn ($request) => ...).
+        'consent_cookie' => env('DEBUGMATE_ANALYTICS_CONSENT_COOKIE'),
     ],
 
     /**

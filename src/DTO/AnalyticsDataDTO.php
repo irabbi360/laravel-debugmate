@@ -75,7 +75,8 @@ class AnalyticsDataDTO extends BaseDTO
         return [
             'session_id' => $this->session_id,
             'type' => $this->type,
-            'project_key' => $this->project_key,
+            // project_key is deliberately not sent: it is the secret API key,
+            // already carried in the X-DebugMate-Key header.
             'user_id' => $this->user_id,
             'user_fingerprint' => $this->user_fingerprint,
             'user_agent' => $this->user_agent,

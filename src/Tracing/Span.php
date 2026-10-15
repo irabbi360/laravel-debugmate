@@ -2,6 +2,9 @@
 
 namespace Irabbi360\LaravelDebugMate\Tracing;
 
+use Irabbi360\LaravelDebugMate\Support\SafeTrace;
+use Irabbi360\LaravelDebugMate\Support\Sanitizer;
+
 use Illuminate\Support\Str;
 
 class Span
@@ -85,10 +88,13 @@ class Span
      */
     public function recordException(\Throwable $exception): self
     {
-        $this->setStatus(self::STATUS_ERROR, $exception->getMessage());
+        $message = (string) Sanitizer::instance()->sanitizeMessage($exception->getMessage());
+
+        $this->setStatus(self::STATUS_ERROR, $message);
         $this->setAttribute('exception.type', get_class($exception));
-        $this->setAttribute('exception.message', $exception->getMessage());
-        $this->setAttribute('exception.stacktrace', $exception->getTraceAsString());
+        $this->setAttribute('exception.message', $message);
+        // Never getTraceAsString(): it embeds string arguments (passwords, tokens).
+        $this->setAttribute('exception.stacktrace', SafeTrace::asString($exception));
         return $this;
     }
 

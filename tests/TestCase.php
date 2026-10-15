@@ -3,10 +3,18 @@
 namespace Irabbi360\LaravelDebugMate\Tests;
 
 use Irabbi360\LaravelDebugMate\DebugMateServiceProvider;
+use Irabbi360\LaravelDebugMate\Services\ApiClient;
 use Orchestra\Testbench\TestCase as Orchestra;
 
 abstract class TestCase extends Orchestra
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        ApiClient::resetCircuit();
+    }
+
     protected function getPackageProviders($app): array
     {
         return [

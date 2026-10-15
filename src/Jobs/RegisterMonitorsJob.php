@@ -4,13 +4,14 @@ namespace Irabbi360\LaravelDebugMate\Jobs;
 
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Irabbi360\LaravelDebugMate\Concerns\RetriesApiReporting;
 use Irabbi360\LaravelDebugMate\Services\ApiClient;
 
 class RegisterMonitorsJob implements ShouldQueue
 {
-    use Queueable, RetriesApiReporting, SerializesModels;
+    use InteractsWithQueue, Queueable, RetriesApiReporting, SerializesModels;
 
     public function __construct(
         protected array $payload,

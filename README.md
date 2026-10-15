@@ -183,8 +183,8 @@ Reports are scrubbed before they leave your app:
 
 ```env
 DEBUGMATE_REDACT_QUERY_BINDINGS=true  # false = send raw bindings
-DEBUGMATE_SEND_USER_PII=true          # false = omit the user's name and email
-DEBUGMATE_ANONYMIZE_IPS=true          # analytics: IPv4 -> a.b.c.0, IPv6 -> /48
+DEBUGMATE_SEND_USER_PII=false         # true = include the user's name and email
+DEBUGMATE_ANONYMIZE_IPS=true          # IPv4 -> a.b.c.0, IPv6 -> /48 (errors, logs, analytics, X-Forwarded-For)
 DEBUGMATE_GEOLOCATION_ENDPOINT=http://ip-api.com/json/
 ```
 
@@ -198,6 +198,36 @@ Source code is attached to stack frames for your application's files only (not
 
 Use `https://` for `DEBUGMATE_API_URL` in production — the project key is sent on
 every request. `php artisan debugmate:verify` warns when it is not.
+
+### Analytics: consent and limits
+
+Only real page loads are tracked (GET, not JSON/XHR, not prefetch). New visitor
+sessions are sampled and rate-limited per (anonymized) IP:
+
+```env
+DEBUGMATE_ANALYTICS_SAMPLE_RATE=1.0
+DEBUGMATE_ANALYTICS_MAX_NEW_SESSIONS=30            # per IP per minute, 0 = unlimited
+DEBUGMATE_ANALYTICS_CONSENT_COOKIE=cookie_consent  # track only when this cookie is truthy
+```
+
+For custom consent logic (no cookie or tracking until it returns true):
+
+```php
+use Irabbi360\LaravelDebugMate\Http\Middleware\TrackAnalytics;
+
+TrackAnalytics::resolveConsentUsing(fn ($request) => $request->cookie('consent') === 'all');
+```
+
+### Timeouts and outages
+
+```env
+DEBUGMATE_CONNECT_TIMEOUT=2
+DEBUGMATE_REQUEST_TIMEOUT=5
+DEBUGMATE_CIRCUIT_BREAKER_SECONDS=30   # after a connection failure, skip API calls for this long
+```
+
+If the API can't be reached, the SDK stops calling it for the breaker window
+(shared through the cache), so an outage never slows every request down.
 
 ### Reporting to a DebugMate instance on the same database
 

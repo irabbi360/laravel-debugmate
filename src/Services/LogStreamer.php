@@ -5,6 +5,7 @@ namespace Irabbi360\LaravelDebugMate\Services;
 use Irabbi360\LaravelDebugMate\DTO\LogDataDTO;
 use Irabbi360\LaravelDebugMate\Support\InternalLog;
 use Irabbi360\LaravelDebugMate\Support\ReportingGuard;
+use Irabbi360\LaravelDebugMate\Support\SafeTrace;
 use Irabbi360\LaravelDebugMate\Concerns\CaptureStackTrace;
 use Irabbi360\LaravelDebugMate\Concerns\CaptureSanitization;
 use Irabbi360\LaravelDebugMate\Concerns\CaptureRequestData;
@@ -55,7 +56,8 @@ class LogStreamer
 
         if (isset($context['exception']) && $context['exception'] instanceof \Throwable) {
             $exception = $context['exception'];
-            $stackTrace = $exception->getTraceAsString();
+            // Not getTraceAsString(): it embeds string arguments (passwords, tokens).
+            $stackTrace = SafeTrace::asString($exception);
             $exceptionClass = get_class($exception);
             $exceptionFile = $exception->getFile();
             $exceptionLine = $exception->getLine();
@@ -68,7 +70,7 @@ class LogStreamer
         $logData = LogDataDTO::from([
             'trace_id' => $traceId,
             'channel' => $sanitizedContext['channel'] ?? 'default',
-            'message' => $message,
+            'message' => (string) $this->sanitizeMessage($message),
             'level' => $level,
             'source' => $source ?? $this->detectSource(),
             'context' => $this->sanitizeContext($sanitizedContext),
@@ -109,7 +111,7 @@ class LogStreamer
         $logData = [
             'trace_id' => $traceId,
             'channel' => $channel,
-            'message' => $message,
+            'message' => (string) $this->sanitizeMessage($message),
             'level' => $level,
             'source' => $this->detectSource(),
             'context' => array_merge($this->getDefaultContext(), $context),
@@ -186,10 +188,21 @@ class LogStreamer
      */
     public function streamFromFile(string $filePath, int $startLine = 0): void
     {
-        if (!file_exists($filePath)) {
-            InternalLog::warning('DebugMate: Log file not found: '.$filePath);
+        // Only files inside storage/logs may be shipped: this method sends the
+        // file's contents to the DebugMate server, so an arbitrary path (e.g.
+        // .env) passed in by mistake or from user input must be refused.
+        $realPath = realpath($filePath);
+        $logsDir = realpath(storage_path('logs'));
+
+        if ($realPath === false || $logsDir === false
+            || ! str_starts_with($realPath, $logsDir.DIRECTORY_SEPARATOR)
+            || ! is_file($realPath)) {
+            InternalLog::warning('DebugMate: Refusing to stream a file outside storage/logs or a missing file.');
+
             return;
         }
+
+        $filePath = $realPath;
 
         $file = file($filePath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
         $logLines = array_slice($file, $startLine);
@@ -346,7 +359,7 @@ class LogStreamer
             return null;
         }
 
-        return app()->bound('request') ? request()->url() : null;
+        return app()->bound('request') ? $this->sanitizeRequestUrl(request(), false) : null;
     }
 
     protected function safeUserId(): mixed

@@ -33,7 +33,8 @@ trait CaptureStackTrace
      */
     public function exceptionToString(\Throwable $exception): string
     {
-        return $exception->getTraceAsString();
+        // getTraceAsString() embeds string arguments - use the argument-free form.
+        return \Irabbi360\LaravelDebugMate\Support\SafeTrace::asString($exception);
     }
 
     /**

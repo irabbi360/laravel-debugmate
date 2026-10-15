@@ -56,7 +56,8 @@ class TrackPerformance
 
         try {
             $this->monitor->flushRequest(
-                endpoint: '/' . ltrim($request->path(), '/'),
+                // Secrets in the path (/reset-password/{token}) are masked.
+                endpoint: '/' . ltrim((string) parse_url($this->monitor->sanitizeRequestUrl($request, false), PHP_URL_PATH), '/'),
                 method: $request->method(),
                 statusCode: $response->getStatusCode(),
             );

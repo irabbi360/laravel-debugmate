@@ -27,7 +27,9 @@ class RequestAnalytics
     protected ?string $sessionId = null;
     protected ?string $userFingerprint = null;
     protected array $sessionData = [];
-    protected const SESSION_CACHE_TTL = 86400; // 24 hours
+    // Matches the 30-minute debugmate_sid cookie (+ margin). Every page view
+    // refreshes it; a longer TTL only keeps dead sessions in the cache.
+    protected const SESSION_CACHE_TTL = 1860;
 
     /** Distinct pages remembered per session (bounds cache entry size). */
     protected const MAX_PAGES_VISITED = 50;
@@ -51,7 +53,9 @@ class RequestAnalytics
 
         $this->sessionData = [
             'session_id' => $this->sessionId,
-            'project_key' => $this->config['debugmate_key'] ?? 'unknown',
+            // No project_key here: it is the secret API key. The project is
+            // identified by the X-DebugMate-Key header; copying the key into the
+            // session would store it in the cache and in every payload body.
             'user_agent' => $requestData['user_agent'] ?? '',
             'ip_address' => $requestData['ip_address'] ?? '',
             'referrer' => $requestData['referrer'] ?? null,
@@ -295,7 +299,16 @@ class RequestAnalytics
     protected function getSessionFromCache(string $sessionId): ?array
     {
         try {
-            return Cache::get("debugmate_session_{$sessionId}");
+            $session = Cache::get("debugmate_session_{$sessionId}");
+
+            if (! is_array($session)) {
+                return null;
+            }
+
+            // Sessions cached by older SDK versions contain the project key.
+            unset($session['project_key']);
+
+            return $session;
         } catch (\Throwable $e) {
             InternalLog::debug('DebugMate: Failed to get session from cache', ['error' => $e->getMessage()]);
             return null;

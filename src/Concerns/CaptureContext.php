@@ -38,13 +38,13 @@ trait CaptureContext
             return [];
         }
 
-        $sendPii = (bool) config('debugmate.send_user_pii', true);
+        $sendPii = (bool) config('debugmate.send_user_pii', false);
 
         return [
             'id' => $user->getAuthIdentifier(),
             'name' => $sendPii ? ($user->name ?? null) : null,
             'email' => $sendPii ? ($user->email ?? null) : null,
-            'ip' => request()->ip() ?? null,
+            'ip' => \Irabbi360\LaravelDebugMate\Support\Sanitizer::instance()->sanitizeIp(request()->ip()),
         ];
     }
 

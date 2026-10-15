@@ -50,10 +50,12 @@ class PerformanceMonitor
         // flushed (e.g. terminate() skipped) must not leak into this one.
         $this->tracer = ($traceParentHeader ? Tracer::fromTraceParent($traceParentHeader) : null) ?? new Tracer;
 
+        $url = $this->sanitizeRequestUrl(request(), false);
+
         $this->rootSpan = $this->tracer->startSpan('http.request', [
             'http.method' => request()->method(),
-            'http.url' => request()->url(),
-            'http.target' => request()->path(),
+            'http.url' => $url,
+            'http.target' => ltrim((string) parse_url($url, PHP_URL_PATH), '/'),
         ]);
 
         $this->queries = [];

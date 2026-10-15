@@ -43,8 +43,8 @@ class DebugMateServiceProvider extends ServiceProvider
         // Register singletons
         $this->app->singleton(ApiClient::class, function ($app) {
             return new ApiClient(
-                config('debugmate.api_url'),
-                config('debugmate.debugmate_key') ?? 'not-configured'
+                (string) config('debugmate.api_url'),
+                (string) (config('debugmate.debugmate_key') ?? 'not-configured')
             );
         });
 

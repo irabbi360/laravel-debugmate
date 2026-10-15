@@ -50,6 +50,58 @@
 - Requires `guzzlehttp/guzzle ^7.15.2` (CVE-2026-69246, CVE-2026-69245).
 - `debugmate:verify` and the API client warn when the API URL is plain HTTP.
 
+### 🔒 Security audit fixes
+
+- **Secrets in URL paths are masked.** Route parameters with sensitive names are
+  reported as placeholders (`/reset-password/{token}`, `/email/verify/42/{hash}`),
+  and token-like path segments (64-char hex tokens, mixed-case random strings,
+  Slack/Discord webhook secrets, Telegram bot tokens) become `***` in every
+  reported URL: errors, logs, analytics page views, performance endpoints and
+  outgoing HTTP spans. Slugs, numeric ids, UUIDs and ULIDs are kept.
+- **No argument values in text stack traces.** `getTraceAsString()` embeds the
+  first 15 characters of string arguments; log reports and span
+  `exception.stacktrace` now use `SafeTrace`, which omits arguments.
+- **The API client no longer follows redirects.** Guzzle strips only
+  `Authorization`/`Cookie` on cross-origin redirects, so `X-DebugMate-Key`
+  could be forwarded to the redirect target. A 3xx is now logged with a hint
+  to fix `DEBUGMATE_API_URL`.
+- **Messages are scrubbed.** Exception, log and span messages have embedded URLs
+  sanitized and `secret=value` pairs, Bearer tokens and credential-shaped
+  strings masked. Database driver messages have quoted values and PostgreSQL
+  `Key (col)=(value)` details masked (MySQL/PostgreSQL unique-violation errors
+  repeat the offending value).
+- **The project key is no longer copied into analytics** sessions (cache) or
+  payload bodies; it is sent only in the request headers. Sessions cached by
+  older versions are scrubbed on load.
+
+### 🔒 Security audit fixes (items 6–13)
+
+- **Analytics abuse limits:** only GET HTML page loads are tracked (no JSON/XHR,
+  no prefetch); `analytics.sample_rate` now applies to new sessions; new
+  sessions are rate-limited per anonymized IP (`max_new_sessions_per_minute`,
+  default 30); session cache TTL cut from 24 h to the cookie's 30 min; the
+  geolocation lookup runs only for new sessions.
+- **Privacy by default:** `send_user_pii` now defaults to **false**. New
+  top-level `anonymize_ips` (default true) anonymizes client IPs in errors and
+  logs and in proxy headers (`X-Forwarded-For`, `Forwarded`, `CF-Connecting-IP`, …).
+- **Consent:** analytics can be gated by a cookie (`analytics.consent_cookie`) or
+  `TrackAnalytics::resolveConsentUsing()`; without consent nothing is tracked
+  and no `debugmate_sid` cookie is set.
+- **Availability:** `connect_timeout` (2 s) and a lower `request_timeout` (5 s);
+  a circuit breaker stops API calls for `circuit_breaker_seconds` after a
+  connection failure, shared across workers through the cache. The client
+  refuses to send when no API URL is configured.
+- **Raw SQL:** single-quoted string literals are masked under
+  `redact_query_bindings` (query spans, query log, `QueryException` SQL).
+- **No report payloads in `failed_jobs`:** report jobs retry while attempts
+  remain and then give up with a log line instead of failing.
+- **`LogStreamer::streamFromFile()`** only accepts files inside `storage/logs`.
+- **CI:** actions pinned to commit SHAs, `permissions: contents: read`,
+  `persist-credentials: false`.
+- **Octane / Swoole:** the re-entrancy guard is tracked per coroutine, so one
+  in-flight report no longer drops other concurrent requests' reports.
+- Removed the unused `analytics.retention_days` option (retention is a server concern).
+
 ### Changed
 
 - **`user_id` is an optional, opaque identifier** for the user in the reporting
