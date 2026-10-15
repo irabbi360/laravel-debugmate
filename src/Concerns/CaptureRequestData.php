@@ -9,6 +9,13 @@ namespace Irabbi360\LaravelDebugMate\Concerns;
  */
 trait CaptureRequestData
 {
+    // Provided by CaptureSanitization, which every user of this trait must also use.
+    abstract public function sanitizeData(array $data, int $depth = 0): array;
+
+    abstract public function sanitizeUrl(?string $url): ?string;
+
+    abstract public function sanitizeQueryString(?string $query): ?string;
+
     /**
      * Capture request data from current request.
      */
@@ -22,12 +29,12 @@ trait CaptureRequestData
             'method' => request()->method(),
             'path' => request()->path(),
             'url' => request()->url(),
-            'full_url' => request()->fullUrl(),
-            'query_string' => request()->getQueryString(),
+            'full_url' => $this->sanitizeUrl(request()->fullUrl()),
+            'query_string' => $this->sanitizeQueryString(request()->getQueryString()),
             'ip_address' => request()->ip(),
             'user_agent' => request()->userAgent(),
             'accept_language' => request()->header('Accept-Language'),
-            'referrer' => request()->header('Referer') ?? request()->referrer() ?? null,
+            'referrer' => $this->sanitizeUrl(request()->header('Referer')),
             'headers' => $this->getSafeHeaders(),
         ];
     }
@@ -41,17 +48,21 @@ trait CaptureRequestData
             return [];
         }
 
-        $sensitiveKeys = ['authorization', 'cookie', 'x-api-token', 'x-csrf-token', 'x-app-token'];
-        $headers = request()->headers->all();
-        $safeHeaders = [];
+        $headers = [];
 
-        foreach ($headers as $key => $value) {
-            if (!in_array(strtolower($key), $sensitiveKeys)) {
-                $safeHeaders[$key] = is_array($value) ? implode(', ', $value) : $value;
-            }
+        foreach (request()->headers->all() as $key => $value) {
+            $headers[$key] = is_array($value) ? implode(', ', $value) : $value;
         }
 
-        return $safeHeaders;
+        if (isset($headers['referer'])) {
+            $headers['referer'] = $this->sanitizeUrl($headers['referer']);
+        }
+
+        // Drops authorization, cookie, php-auth-*, x-*-token, x-api-key, ...
+        return array_filter(
+            $this->sanitizeData($headers),
+            fn ($value) => $value !== '***SANITIZED***'
+        );
     }
 
     /**
@@ -90,11 +101,19 @@ trait CaptureRequestData
      */
     public function captureRequestContext(): array
     {
+        try {
+            $user = auth()->user();
+        } catch (\Throwable) {
+            $user = null;
+        }
+
+        $sendPii = (bool) config('debugmate.send_user_pii', true);
+
         return [
             'request_data' => $this->captureRequestData(),
-            'user_id' => auth()->id() ?? null,
-            'user_name' => auth()->user()?->name ?? null,
-            'user_email' => auth()->user()?->email ?? null,
+            'user_id' => $user?->getAuthIdentifier(),
+            'user_name' => $sendPii ? ($user->name ?? null) : null,
+            'user_email' => $sendPii ? ($user->email ?? null) : null,
         ];
     }
 }

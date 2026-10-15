@@ -20,11 +20,15 @@ class Tracer
     protected int $maxSpans;
     protected int $droppedSpans = 0;
 
-    public function __construct(?string $traceId = null, int $traceFlags = self::TRACE_FLAG_SAMPLED, ?int $maxSpans = null)
+    /** Span id of the upstream caller (from an incoming traceparent header). */
+    protected ?string $remoteParentSpanId = null;
+
+    public function __construct(?string $traceId = null, int $traceFlags = self::TRACE_FLAG_SAMPLED, ?int $maxSpans = null, ?string $remoteParentSpanId = null)
     {
         $this->traceId = $traceId ?? $this->generateTraceId();
         $this->traceFlags = $traceFlags;
         $this->maxSpans = $maxSpans ?? $this->resolveMaxSpans();
+        $this->remoteParentSpanId = $remoteParentSpanId;
     }
 
     /**
@@ -48,7 +52,8 @@ class Tracer
      */
     public function startSpan(string $name, array $attributes = []): Span
     {
-        $parentSpanId = $this->getCurrentSpanId();
+        // The first local span hangs off the upstream span, if there is one.
+        $parentSpanId = $this->getCurrentSpanId() ?? (empty($this->allSpans) ? $this->remoteParentSpanId : null);
         $span = new Span($this->traceId, $name, $parentSpanId);
 
         if (!empty($attributes)) {
@@ -172,18 +177,21 @@ class Tracer
      */
     public static function fromTraceParent(string $traceParent): ?self
     {
-        $parts = explode('-', $traceParent);
-        if (count($parts) !== 4) {
+        // W3C Trace Context: lowercase hex, fixed lengths, all-zero ids invalid.
+        // The header is client-controlled, so anything else is rejected.
+        if (! preg_match('/^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/', trim($traceParent), $m)) {
             return null;
         }
 
-        [$version, $traceId, $spanId, $flags] = $parts;
+        [, $version, $traceId, $spanId, $flags] = $m;
 
-        if ($version !== '00' || strlen($traceId) !== 32 || strlen($spanId) !== 16 || strlen($flags) !== 2) {
+        if ($version === 'ff'
+            || $traceId === str_repeat('0', 32)
+            || $spanId === str_repeat('0', 16)) {
             return null;
         }
 
-        return new self($traceId, (int)hexdec($flags));
+        return new self($traceId, (int) hexdec($flags), null, $spanId);
     }
 
     /**

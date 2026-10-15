@@ -49,6 +49,36 @@ abstract class BaseDTO implements Arrayable, JsonSerializable
     abstract public static function from(array $data): static;
 
     /**
+     * The user id belongs to the reporting application, not to DebugMate, so
+     * it is an optional, opaque identifier: an integer, a UUID / ULID or any
+     * other string key. Anything else (arrays, objects, empty strings) is
+     * dropped, and strings are capped at 255 characters.
+     */
+    protected static function normalizeUserId(mixed $userId): int|string|null
+    {
+        if (is_int($userId)) {
+            return $userId;
+        }
+
+        if (is_string($userId)) {
+            $userId = trim($userId);
+
+            if ($userId === '') {
+                return null;
+            }
+
+            // Keep plain numeric keys numeric for APIs that expect integers.
+            if (ctype_digit($userId) && strlen($userId) < 19) {
+                return (int) $userId;
+            }
+
+            return mb_substr($userId, 0, 255);
+        }
+
+        return null;
+    }
+
+    /**
      * Merge another DTO into this one.
      */
     public function merge(BaseDTO $other): static

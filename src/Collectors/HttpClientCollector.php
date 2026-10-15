@@ -2,10 +2,17 @@
 
 namespace Irabbi360\LaravelDebugMate\Collectors;
 
+use Irabbi360\LaravelDebugMate\Concerns\CaptureSanitization;
 use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
+use Irabbi360\LaravelDebugMate\Support\InternalLog;
 
 class HttpClientCollector implements CollectorInterface
 {
+    use CaptureSanitization;
+
+    /** Requests that never receive a response event must not pile up forever. */
+    protected const MAX_PENDING_SPANS = 100;
+
     protected array $spans = [];
 
     public function __construct(protected PerformanceMonitor $monitor)
@@ -27,14 +34,23 @@ class HttpClientCollector implements CollectorInterface
         try {
             \Event::listen('Illuminate\Http\Client\Events\RequestSending', function ($event) {
                 try {
+                    if (! $this->monitor->hasActiveTrace()) {
+                        return;
+                    }
+
+                    if (count($this->spans) >= self::MAX_PENDING_SPANS) {
+                        $this->spans = [];
+                    }
+
                     $key = $this->getRequestId($event);
                     $span = $this->monitor->startSpan('http.client.request', [
-                        'http.request.url' => (string)($event->request->url() ?? 'unknown'),
+                        // Query strings often carry API keys / signatures.
+                        'http.request.url' => (string) $this->sanitizeUrl((string) ($event->request->url() ?? 'unknown')),
                         'http.request.method' => $event->request->method() ?? 'UNKNOWN',
                     ]);
                     $this->spans[$key] = $span;
                 } catch (\Throwable $e) {
-                    \Log::debug('DebugMate HttpClientCollector: Error in RequestSending: ' . $e->getMessage());
+                    InternalLog::debug('DebugMate HttpClientCollector: Error in RequestSending: ' . $e->getMessage());
                 }
             });
 
@@ -56,7 +72,7 @@ class HttpClientCollector implements CollectorInterface
                         unset($this->spans[$key]);
                     }
                 } catch (\Throwable $e) {
-                    \Log::debug('DebugMate HttpClientCollector: Error in ResponseReceived: ' . $e->getMessage());
+                    InternalLog::debug('DebugMate HttpClientCollector: Error in ResponseReceived: ' . $e->getMessage());
                 }
             });
 
@@ -74,11 +90,11 @@ class HttpClientCollector implements CollectorInterface
                         unset($this->spans[$key]);
                     }
                 } catch (\Throwable $e) {
-                    \Log::debug('DebugMate HttpClientCollector: Error in ConnectionFailed: ' . $e->getMessage());
+                    InternalLog::debug('DebugMate HttpClientCollector: Error in ConnectionFailed: ' . $e->getMessage());
                 }
             });
         } catch (\Throwable $e) {
-            \Log::debug('DebugMate HttpClientCollector: Error registering listeners: ' . $e->getMessage());
+            InternalLog::debug('DebugMate HttpClientCollector: Error registering listeners: ' . $e->getMessage());
         }
     }
 

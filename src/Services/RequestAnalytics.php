@@ -3,18 +3,21 @@
 namespace Irabbi360\LaravelDebugMate\Services;
 
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Irabbi360\LaravelDebugMate\Jobs\ReportAnalyticsJob;
 use Irabbi360\LaravelDebugMate\DTO\AnalyticsDataDTO;
 use Irabbi360\LaravelDebugMate\Concerns\CaptureRequestData;
+use Irabbi360\LaravelDebugMate\Concerns\CaptureSanitization;
 use Irabbi360\LaravelDebugMate\Concerns\CaptureDeviceInfo;
 use Irabbi360\LaravelDebugMate\Concerns\CaptureGeoInfo;
 use Irabbi360\LaravelDebugMate\Concerns\AsyncDispatch;
+use Irabbi360\LaravelDebugMate\Support\InternalLog;
+use Irabbi360\LaravelDebugMate\Support\IpAnonymizer;
 
 class RequestAnalytics
 {
     use CaptureRequestData;
+    use CaptureSanitization;
     use CaptureDeviceInfo;
     use CaptureGeoInfo;
     use AsyncDispatch;
@@ -25,6 +28,9 @@ class RequestAnalytics
     protected ?string $userFingerprint = null;
     protected array $sessionData = [];
     protected const SESSION_CACHE_TTL = 86400; // 24 hours
+
+    /** Distinct pages remembered per session (bounds cache entry size). */
+    protected const MAX_PAGES_VISITED = 50;
 
     public function __construct(ApiClient $apiClient, array $config)
     {
@@ -105,13 +111,7 @@ class RequestAnalytics
      */
     public function reportFromDTO(AnalyticsDataDTO $dto): void
     {
-        $data = $dto->toArray();
-
-        if ($this->config['async_reporting'] ?? false) {
-            $this->dispatchAnalyticsReport($data);
-        } else {
-            $this->apiClient->reportAnalytics($data);
-        }
+        $this->sendAnalytics($dto->type, $dto->toArray());
     }
 
     /**
@@ -124,7 +124,7 @@ class RequestAnalytics
         }
 
         // Get current page
-        $currentPage = $pageData['url'] ?? request()->url();
+        $currentPage = $this->sanitizeUrl($pageData['url'] ?? request()->url());
 
         // Restore session from cache to get real data
         $cachedSession = $this->getSessionFromCache($this->sessionId);
@@ -139,8 +139,11 @@ class RequestAnalytics
         if (!isset($this->sessionData['pages_visited'])) {
             $this->sessionData['pages_visited'] = [];
         }
-        if (!in_array($currentPage, $this->sessionData['pages_visited'])) {
+        if (! in_array($currentPage, $this->sessionData['pages_visited'], true)) {
             $this->sessionData['pages_visited'][] = $currentPage;
+            $this->sessionData['pages_visited'] = array_slice(
+                $this->sessionData['pages_visited'], -self::MAX_PAGES_VISITED
+            );
         }
 
         // Update cache
@@ -167,7 +170,7 @@ class RequestAnalytics
     /**
      * Track a custom event using DTO.
      */
-    public function trackEvent(string $eventName, array $eventData = [], string $category = null): void
+    public function trackEvent(string $eventName, array $eventData = [], ?string $category = null): void
     {
         if (!$this->sessionId) {
             return;
@@ -183,7 +186,7 @@ class RequestAnalytics
         $analyticsData = AnalyticsDataDTO::from(array_merge($this->sessionData, [
             'type' => 'event',
             'event_name' => $eventName,
-            'event_data' => $eventData,
+            'event_data' => $this->sanitizeData($eventData),
             'event_category' => $category ?? 'custom',
             'page_url' => request()->url(),
         ]));
@@ -247,7 +250,11 @@ class RequestAnalytics
             $requestData['accept_language'] ?? '',
         ];
 
-        return hash('sha256', implode('|', $components));
+        // Keyed with the app key: a plain hash of UA|IP|language can be
+        // brute-forced back to the IP (the IPv4 space is tiny).
+        $key = (string) (config('app.key') ?: ($this->config['debugmate_key'] ?? 'debugmate'));
+
+        return hash_hmac('sha256', implode('|', $components), $key);
     }
 
     /**
@@ -255,12 +262,8 @@ class RequestAnalytics
      */
     protected function anonymizeIp(string $ip): string
     {
-        if ($this->config['anonymize_ips'] ?? false) {
-            $parts = explode('.', $ip);
-            if (count($parts) === 4) {
-                $parts[3] = '0';
-                return implode('.', $parts);
-            }
+        if ($this->config['analytics']['anonymize_ips'] ?? true) {
+            return (string) IpAnonymizer::anonymize($ip);
         }
 
         return $ip;
@@ -282,7 +285,7 @@ class RequestAnalytics
         try {
             Cache::put("debugmate_session_{$sessionId}", $data, self::SESSION_CACHE_TTL);
         } catch (\Throwable $e) {
-            Log::debug('DebugMate: Failed to store session in cache', ['error' => $e->getMessage()]);
+            InternalLog::debug('DebugMate: Failed to store session in cache', ['error' => $e->getMessage()]);
         }
     }
 
@@ -294,7 +297,7 @@ class RequestAnalytics
         try {
             return Cache::get("debugmate_session_{$sessionId}");
         } catch (\Throwable $e) {
-            Log::debug('DebugMate: Failed to get session from cache', ['error' => $e->getMessage()]);
+            InternalLog::debug('DebugMate: Failed to get session from cache', ['error' => $e->getMessage()]);
             return null;
         }
     }
@@ -307,7 +310,7 @@ class RequestAnalytics
         try {
             Cache::forget("debugmate_session_{$sessionId}");
         } catch (\Throwable $e) {
-            Log::debug('DebugMate: Failed to delete session from cache', ['error' => $e->getMessage()]);
+            InternalLog::debug('DebugMate: Failed to delete session from cache', ['error' => $e->getMessage()]);
         }
     }
 
@@ -316,25 +319,20 @@ class RequestAnalytics
      */
     protected function sendAnalytics(string $type, array $payload): void
     {
-        if (!($this->config['send_analytics_to_api'] ?? true)) {
+        if (! ($this->config['analytics']['send_analytics_to_api'] ?? true)) {
             return;
         }
 
-        $async = $this->config['async_reporting'] ?? false;
+        if ($this->config['async_reporting'] ?? false) {
+            $this->dispatchAnalyticsReport($payload);
 
-        if ($async) {
-            try {
-                $this->dispatchAnalyticsReport($payload);
-                return;
-            } catch (\Throwable $e) {
-                Log::error('DebugMate: Failed to dispatch analytics job', ['error' => $e->getMessage()]);
-            }
+            return;
         }
 
         try {
             $this->apiClient->reportAnalytics($payload);
         } catch (\Throwable $e) {
-            Log::debug('DebugMate: Failed to send analytics', ['error' => $e->getMessage()]);
+            InternalInternalLog::debug('DebugMate: Failed to send analytics', ['type' => $type, 'error' => $e->getMessage()]);
         }
     }
 
@@ -354,6 +352,3 @@ class RequestAnalytics
         return $this->userFingerprint;
     }
 }
-
-
-

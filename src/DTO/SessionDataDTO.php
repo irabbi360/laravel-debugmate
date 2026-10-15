@@ -22,7 +22,7 @@ class SessionDataDTO implements Arrayable, JsonSerializable
         public readonly string $user_agent,
         public readonly string $ip_address,
         public readonly ?string $referrer = null,
-        public readonly ?int $user_id = null,
+        public readonly int|string|null $user_id = null,
         // Browser info
         public readonly ?string $browser = null,
         public readonly ?string $browser_version = null,
@@ -57,7 +57,7 @@ class SessionDataDTO implements Arrayable, JsonSerializable
             user_agent: $data['user_agent'] ?? '',
             ip_address: $data['ip_address'] ?? '',
             referrer: $data['referrer'] ?? null,
-            user_id: $data['user_id'] ?? null,
+            user_id: self::normalizeUserId($data['user_id'] ?? null),
             browser: $data['browser'] ?? null,
             browser_version: $data['browser_version'] ?? null,
             os: $data['os'] ?? null,

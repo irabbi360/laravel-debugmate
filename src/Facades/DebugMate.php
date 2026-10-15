@@ -13,7 +13,7 @@ use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
  * @method static void log(string $channel, string $message, string $level = 'info', array $context = [], ?string $traceId = null)
  * @method static array getPerformanceSummary()
  * @method static void trackPageView(array $pageData)
- * @method static void trackEvent(string $eventName, array $eventData = [], string $category = null)
+ * @method static void trackEvent(string $eventName, array $eventData = [], ?string $category = null)
  * @method static string|null getSessionId()
  * @method static string|null getUserFingerprint()
  *
@@ -125,7 +125,7 @@ class DebugMate extends Facade
      *       'currency' => 'USD',
      *   ], category: 'conversion');
      */
-    public static function trackEvent(string $eventName, array $eventData = [], string $category = null): void
+    public static function trackEvent(string $eventName, array $eventData = [], ?string $category = null): void
     {
         app(\Irabbi360\LaravelDebugMate\Services\RequestAnalytics::class)->trackEvent($eventName, $eventData, $category);
     }

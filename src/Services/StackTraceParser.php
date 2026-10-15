@@ -7,6 +7,9 @@ use ReflectionClass;
 
 class StackTraceParser
 {
+    /** @var array<string, array<int, string>|false> File contents read during the current parse. */
+    protected array $fileCache = [];
+
     /**
      * Parse a throwable exception into detailed stack frames.
      */
@@ -15,12 +18,17 @@ class StackTraceParser
         $frames = [];
         $trace = $exception->getTrace();
 
-        // Add the initial frame where the exception was thrown
-        $frames[] = $this->createFrameFromException($exception);
+        try {
+            // Add the initial frame where the exception was thrown
+            $frames[] = $this->createFrameFromException($exception);
 
-        // Add frames from the stack trace
-        foreach ($trace as $index => $frame) {
-            $frames[] = $this->createFrameFromTrace($frame, $index);
+            // Add frames from the stack trace
+            foreach ($trace as $index => $frame) {
+                $frames[] = $this->createFrameFromTrace($frame, $index);
+            }
+        } finally {
+            // Don't keep file contents alive between reports.
+            $this->fileCache = [];
         }
 
         return $frames;
@@ -41,7 +49,8 @@ class StackTraceParser
             'column_number' => null,
             'class' => null,
             'method' => null,
-            'code_snippet' => $this->getCodeSnippet($file, $line),
+            // The throw point always gets a snippet (unless snippets are off).
+            'code_snippet' => $this->snippetMode() === 'none' ? [] : $this->getCodeSnippet($file, $line),
             'application_frame' => $this->isApplicationFrame($file),
             'arguments' => [],
         ];
@@ -75,7 +84,7 @@ class StackTraceParser
             'column_number' => null,
             'class' => $class,
             'method' => $function,
-            'code_snippet' => $file && $line ? $this->getCodeSnippet($file, $line) : null,
+            'code_snippet' => $file && $line && $this->shouldIncludeSnippet($file) ? $this->getCodeSnippet($file, $line) : [],
             'application_frame' => $file ? $this->isApplicationFrame($file) : false,
             'arguments' => $arguments,
         ];
@@ -87,18 +96,25 @@ class StackTraceParser
      * IMPORTANT: Must use FILE_IGNORE_NEW_LINES only (NOT FILE_SKIP_EMPTY_LINES)
      * to preserve correct line numbering
      */
-    protected function getCodeSnippet(string $file, int $line, int $context = 30): array
+    protected function getCodeSnippet(string $file, int $line, ?int $context = null): array
     {
         $snippet = [];
+        $context ??= $this->snippetLines();
 
-        if (!file_exists($file)) {
+        if ($context <= 0) {
             return $snippet;
         }
 
         try {
             // FILE_IGNORE_NEW_LINES only - do NOT use FILE_SKIP_EMPTY_LINES
             // Empty lines must be preserved to keep line numbers accurate
-            $content = file($file, FILE_IGNORE_NEW_LINES);
+            if (! array_key_exists($file, $this->fileCache)) {
+                $this->fileCache[$file] = is_file($file) && is_readable($file)
+                    ? file($file, FILE_IGNORE_NEW_LINES)
+                    : false;
+            }
+
+            $content = $this->fileCache[$file];
 
             if (!is_array($content)) {
                 return $snippet;
@@ -115,11 +131,37 @@ class StackTraceParser
                 // Get line content (preserve empty lines as empty strings)
                 $snippet[$lineNumber] = $content[$i] ?? '';
             }
-        } catch (\Exception $e) {
+        } catch (\Throwable) {
             // Silently ignore file read errors
         }
 
         return $snippet;
+    }
+
+    /**
+     * debugmate.code_snippets: application (default), all or none.
+     */
+    protected function snippetMode(): string
+    {
+        $mode = function_exists('config') ? config('debugmate.code_snippets', 'application') : 'application';
+
+        return in_array($mode, ['application', 'all', 'none'], true) ? $mode : 'application';
+    }
+
+    protected function snippetLines(): int
+    {
+        $lines = function_exists('config') ? (int) config('debugmate.code_snippet_lines', 30) : 30;
+
+        return max(0, min($lines, 200));
+    }
+
+    protected function shouldIncludeSnippet(string $file): bool
+    {
+        return match ($this->snippetMode()) {
+            'all' => true,
+            'none' => false,
+            default => $this->isApplicationFrame($file),
+        };
     }
 
     /**
@@ -200,8 +242,10 @@ class StackTraceParser
      */
     protected function formatValue(mixed $value): mixed
     {
+        // String arguments routinely carry secrets (Hash::check($plainPassword),
+        // encrypt($token), ...). Only their type and length are reported.
         if (is_string($value)) {
-            return strlen($value) > 100 ? substr($value, 0, 100) . '...' : $value;
+            return 'string('.strlen($value).')';
         }
 
         if (is_array($value)) {

@@ -13,7 +13,7 @@ class AnalyticsDataDTO extends BaseDTO
         public readonly string $session_id,
         public readonly string $type, // 'session', 'page_view', 'event'
         public readonly ?string $project_key = null,
-        public readonly ?int $user_id = null,
+        public readonly int|string|null $user_id = null,
         public readonly ?string $user_fingerprint = null,
         public readonly ?string $user_agent = null,
         public readonly ?string $ip_address = null,
@@ -44,7 +44,7 @@ class AnalyticsDataDTO extends BaseDTO
             session_id: $data['session_id'] ?? \Illuminate\Support\Str::uuid()->toString(),
             type: $data['type'] ?? 'page_view',
             project_key: $data['project_key'] ?? null,
-            user_id: $data['user_id'] ?? null,
+            user_id: self::normalizeUserId($data['user_id'] ?? null),
             user_fingerprint: $data['user_fingerprint'] ?? null,
             user_agent: $data['user_agent'] ?? null,
             ip_address: $data['ip_address'] ?? null,

@@ -54,7 +54,7 @@ class TracingViewEngineTest extends TestCase
             }
         };
 
-        $engine = new TracingViewEngine($inner, $this->createMock(ViewCollector::class));
+        $engine = new TracingViewEngine($inner, $this->createStub(ViewCollector::class));
         $engine->forgetCompiledOrNotExpired();
 
         $this->assertTrue($called);

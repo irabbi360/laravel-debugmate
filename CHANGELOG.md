@@ -1,5 +1,76 @@
 # DebugMate SDK Changelog
 
+## [2.2.0] - Unreleased
+
+### 🐛 Reliability — the SDK can no longer break the host app
+
+- **Exception reporting never throws.** `ErrorTracker::reportError()` and the
+  `ExceptionHandler::handles()` callback now catch every failure. Laravel does not
+  guard report callbacks, so a reporting error used to replace the original
+  exception and skip the app's own `laravel.log` entry.
+- **UUID / ULID user keys** no longer cause a `TypeError` in the DTOs. Non-numeric
+  ids are sent as `user_id: null` (the API validates it as an integer).
+- **Connection failures are caught.** `ApiClient` caught only `RequestException`;
+  Guzzle's `ConnectException` (DNS, refused, timeout) escaped and crashed the
+  request when `async_reporting` was off.
+- **Log tracking works.** `Log::listen()` receives `MessageLogged`, which has no
+  `channel`, so every log was tagged `default` and dropped by `log_channels`. The
+  app's default channel (`logging.default`) is now used.
+- **Analytics:** a request without a `User-Agent` returned a 500. Fixed, and the
+  whole analytics middleware is now best-effort.
+- A re-entrancy guard (`ReportingGuard`) stops DebugMate from reporting on itself.
+  SDK diagnostics go through `InternalLog`, which can no longer throw.
+- `RequestAnalytics` is now `scoped` so visitor state cannot leak between
+  requests under Octane. Tracers are reset per request/job/command.
+- Performance payloads are sent in the middleware's `terminate()`, after the
+  response, instead of delaying it.
+- `LogStreamer::watch()` now sees file growth (`clearstatcache`) and handles rotation.
+- Git info works with `packed-refs` and detached HEAD.
+
+### 🔒 Security & privacy
+
+- String query bindings are redacted (`redact_query_bindings`, on by default) in
+  error context and performance payloads.
+- Sensitive query parameters are masked in all reported URLs (request, referrer,
+  page views, outgoing HTTP client calls).
+- Stack-frame string arguments are no longer sent (`string(<len>)` instead).
+- `QueryException` messages no longer include bound values.
+- The live session id is no longer sent; cookie values are not sent.
+- Log context now uses the full sanitizer (it used a weaker 5-key exact match).
+- Larger built-in sensitive key list plus credential-shaped value detection; the
+  `auth` key is matched exactly so `author_id` / `authenticated` are kept.
+- Analytics settings `analytics.anonymize_ips` / `analytics.exclude_bots` /
+  `analytics.send_analytics_to_api` were read from the wrong config path and had
+  no effect. IPv6 is now anonymized, and the geolocation lookup receives the
+  anonymized IP. The visitor fingerprint is an HMAC keyed with `APP_KEY`, so
+  fingerprints change once after upgrading.
+- `traceparent` is strictly validated (hex, non-zero) and the upstream parent span
+  id is preserved.
+- Livewire property values are no longer recorded (only their type).
+- Requires `guzzlehttp/guzzle ^7.15.2` (CVE-2026-69246, CVE-2026-69245).
+- `debugmate:verify` and the API client warn when the API URL is plain HTTP.
+
+### Changed
+
+- **`user_id` is an optional, opaque identifier** for the user in the reporting
+  app. Integer keys stay integers; UUID / ULID / string keys are sent as strings
+  (max 255); guests send `null`. The DebugMate server must accept a nullable
+  string for `user_id` (the analytics endpoint currently validates `integer`).
+- **Code snippets** are attached to application frames only by default
+  (`code_snippets`: `application` | `all` | `none`), and each source file is read
+  once per report instead of once per frame.
+- **Queue:** reports go to `queue_name` on `queue_connection` (new). The old
+  `queue` key was never read and has been removed.
+- **Laravel 10 support dropped** (end of life; every 10.x release carries
+  security advisories). Supported: Laravel 11, 12, 13 on PHP 8.2+.
+- CI covers PHP 8.2–8.4 × Laravel 11–13 and audits runtime dependencies.
+
+### ⚙️ New config
+
+`redact_query_bindings`, `send_user_pii`, `sensitive_keys`,
+`geolocation.endpoint`, `geolocation.timeout`, `code_snippets`,
+`code_snippet_lines`, `queue_name`, `queue_connection`.
+
 ## [2.1.0] - September 8, 2026
 
 ### 🐛 Critical Fixes — worker memory leak & self-ingest amplification

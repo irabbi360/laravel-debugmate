@@ -25,7 +25,7 @@ class RequestDataDTO implements Arrayable, JsonSerializable
         public readonly float $response_time_ms,
         public readonly ?float $memory_usage = null,
         public readonly ?string $referrer = null,
-        public readonly ?int $user_id = null,
+        public readonly int|string|null $user_id = null,
         public readonly ?string $accept_language = null,
     ) {}
 
@@ -43,7 +43,7 @@ class RequestDataDTO implements Arrayable, JsonSerializable
             response_time_ms: $data['response_time_ms'] ?? 0.0,
             memory_usage: $data['memory_usage'] ?? null,
             referrer: $data['referrer'] ?? null,
-            user_id: $data['user_id'] ?? null,
+            user_id: self::normalizeUserId($data['user_id'] ?? null),
             accept_language: $data['accept_language'] ?? null,
         );
     }

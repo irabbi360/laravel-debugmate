@@ -4,6 +4,7 @@ namespace Irabbi360\LaravelDebugMate\Collectors;
 
 use Illuminate\Support\Str;
 use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
+use Irabbi360\LaravelDebugMate\Support\InternalLog;
 
 class CommandCollector implements CollectorInterface
 {
@@ -42,7 +43,7 @@ class CommandCollector implements CollectorInterface
                     ]);
                     $this->spans[$key] = $span;
                 } catch (\Throwable $e) {
-                    \Log::debug('DebugMate CommandCollector: Error in CommandStarting: '.$e->getMessage());
+                    InternalLog::debug('DebugMate CommandCollector: Error in CommandStarting: '.$e->getMessage());
                 }
             });
 
@@ -50,11 +51,11 @@ class CommandCollector implements CollectorInterface
                 try {
                     $this->finishCommand($event->command ?? 'unknown', $event->exitCode ?? 0);
                 } catch (\Throwable $e) {
-                    \Log::debug('DebugMate CommandCollector: Error in CommandFinished: '.$e->getMessage());
+                    InternalLog::debug('DebugMate CommandCollector: Error in CommandFinished: '.$e->getMessage());
                 }
             });
         } catch (\Throwable $e) {
-            \Log::debug('DebugMate CommandCollector: Error registering listeners: '.$e->getMessage());
+            InternalLog::debug('DebugMate CommandCollector: Error registering listeners: '.$e->getMessage());
         }
     }
 

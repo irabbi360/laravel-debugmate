@@ -25,6 +25,8 @@ use Irabbi360\LaravelDebugMate\Services\MonitorRegistrar;
 use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
 use Irabbi360\LaravelDebugMate\Services\RequestAnalytics;
 use Irabbi360\LaravelDebugMate\Services\StackTraceParser;
+use Irabbi360\LaravelDebugMate\Support\InternalLog;
+use Irabbi360\LaravelDebugMate\Support\ReportingGuard;
 
 class DebugMateServiceProvider extends ServiceProvider
 {
@@ -85,7 +87,9 @@ class DebugMateServiceProvider extends ServiceProvider
             return new BotDetector(config('debugmate.analytics', []));
         });
 
-        $this->app->singleton(RequestAnalytics::class, function ($app) {
+        // Scoped, not singleton: it holds the current visitor's session, which
+        // must not leak into the next request under Octane or into queue jobs.
+        $this->app->scoped(RequestAnalytics::class, function ($app) {
             return new RequestAnalytics(
                 $app->make(ApiClient::class),
                 config('debugmate')
@@ -157,58 +161,8 @@ class DebugMateServiceProvider extends ServiceProvider
                 async: (bool) config('debugmate.async_reporting', false)
             );
         } catch (\Throwable $e) {
-            \Log::debug('DebugMate: Failed to sync monitors on boot: '.$e->getMessage());
+            InternalLog::debug('DebugMate: Failed to sync monitors on boot: '.$e->getMessage());
         }
-    }
-
-    /**
-     * Register error handler.
-     */
-    protected function registerErrorHandler(): void
-    {
-        if (!config('debugmate.track_errors')) {
-            return;
-        }
-
-        $errorTracker = $this->app->make(ErrorTracker::class);
-
-        // Use modern Log::listen() instead of deprecated illuminate.log event
-        \Log::listen(function ($record) use ($errorTracker) {
-            try {
-                // Prevent infinite recursion - don't process DebugMate's own logs
-                if (isset($record->context['_debugmate_internal'])) {
-                    return;
-                }
-
-                // Extract from LogRecord
-                // Handle both Monolog\LogRecord and older format
-                $level = is_object($record->level) && method_exists($record->level, 'getName')
-                    ? $record->level->getName()
-                    : (string)($record->level ?? 'error');
-
-                $context = $record->context ?? [];
-
-                // Only track errors and above
-                if (in_array($level, ['error', 'critical', 'alert', 'emergency'])) {
-                    // Check if this log contains an exception
-                    if (isset($context['exception']) && $context['exception'] instanceof \Throwable) {
-                        $exception = $context['exception'];
-                        if (!in_array(get_class($exception), config('debugmate.ignore_exceptions', []))) {
-                            $errorTracker->reportError($exception, [
-                                'user_id' => auth()->id() ?? null,
-                                'route' => request()?->path() ?? null,
-                                'method' => request()?->method() ?? null,
-                                'ip' => request()?->ip() ?? null,
-                            ]);
-                        }
-                    }
-                }
-            } catch (\Throwable $e) {
-                // Fail silently - don't break the app
-                // Mark as internal to prevent recursion
-                error_log('DebugMate error handler failed: ' . $e->getMessage());
-            }
-        });
     }
 
     /**
@@ -220,32 +174,32 @@ class DebugMateServiceProvider extends ServiceProvider
             return;
         }
 
-        $logStreamer = $this->app->make(LogStreamer::class);
-
-        // Laravel's Log::listen() passes a single LogRecord object
-        \Log::listen(function ($record) use ($logStreamer) {
+        // Log::listen() receives Illuminate\Log\Events\MessageLogged, which
+        // carries level / message / context but NOT the channel name.
+        \Log::listen(function ($record) {
             try {
-                // Prevent infinite recursion - don't process DebugMate's own logs
-                if (isset($record->context['_debugmate_internal'])) {
+                // Prevent infinite recursion - don't process DebugMate's own logs,
+                // nor anything logged while DebugMate is building/sending a report.
+                if (isset($record->context[InternalLog::CONTEXT_KEY]) || ReportingGuard::active()) {
                     return;
                 }
 
-                // Extract data from LogRecord
-                // Handle both Monolog\LogRecord and older format
                 $level = is_object($record->level) && method_exists($record->level, 'getName')
-                    ? $record->level->getName()
-                    : (string)($record->level ?? 'info');
+                    ? strtolower($record->level->getName())
+                    : strtolower((string) ($record->level ?? 'info'));
 
-                $message = $record->message ?? '';
-                $context = $record->context ?? [];
-                $channel = $record->channel ?? 'default';
+                $message = is_scalar($record->message) || $record->message instanceof \Stringable
+                    ? (string) $record->message
+                    : json_encode($record->message);
+                $context = is_array($record->context ?? null) ? $record->context : [];
+                $channel = $record->channel ?? config('logging.default', 'stack');
 
                 // Extract additional info if available
                 $source = $this->detectSource();
                 $traceId = $context['trace_id'] ?? null;
 
                 // Stream the log
-                $logStreamer->streamLog($message, $level, array_merge($context, ['channel' => $channel]), $traceId, $source);
+                $this->app->make(LogStreamer::class)->streamLog((string) $message, $level, array_merge($context, ['channel' => $channel]), $traceId, $source);
             } catch (\Throwable $e) {
                 // Fail silently - don't break the app if logging fails
                 error_log('DebugMate listener error: ' . $e->getMessage());
@@ -258,12 +212,12 @@ class DebugMateServiceProvider extends ServiceProvider
      */
     private function detectSource(): string
     {
-        if (app()->runningInConsole()) {
-            return 'cli';
-        }
-
         if (app()->runningUnitTests()) {
             return 'test';
+        }
+
+        if (app()->runningInConsole()) {
+            return 'cli';
         }
 
         return 'http';
@@ -305,7 +259,7 @@ class DebugMateServiceProvider extends ServiceProvider
                     $collector = $factory();
                     $collector->register();
                 } catch (\Throwable $e) {
-                    \Log::debug("DebugMate: Failed to register {$name} collector: " . $e->getMessage());
+                    InternalLog::debug("DebugMate: Failed to register {$name} collector: " . $e->getMessage());
                 }
             }
         }
@@ -324,7 +278,7 @@ class DebugMateServiceProvider extends ServiceProvider
             $kernel = $this->app->make(Kernel::class);
             $kernel->pushMiddleware(TrackAnalytics::class);
         } catch (\Throwable $e) {
-            \Log::debug('DebugMate: Failed to register analytics middleware: ' . $e->getMessage());
+            InternalLog::debug('DebugMate: Failed to register analytics middleware: ' . $e->getMessage());
         }
     }
 
@@ -341,7 +295,7 @@ class DebugMateServiceProvider extends ServiceProvider
             $kernel = $this->app->make(Kernel::class);
             $kernel->pushMiddleware(TrackPerformance::class);
         } catch (\Throwable $e) {
-            \Log::debug('DebugMate: Failed to register performance middleware: '.$e->getMessage());
+            InternalLog::debug('DebugMate: Failed to register performance middleware: '.$e->getMessage());
         }
     }
 }

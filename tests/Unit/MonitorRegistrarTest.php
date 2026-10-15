@@ -10,7 +10,7 @@ class MonitorRegistrarTest extends TestCase
 {
     public function test_resolve_urls_normalizes_and_dedupes(): void
     {
-        $api = $this->createMock(ApiClient::class);
+        $api = $this->createStub(ApiClient::class);
         $registrar = new MonitorRegistrar($api, [
             'enabled' => true,
             'track_monitors' => true,
@@ -33,7 +33,7 @@ class MonitorRegistrarTest extends TestCase
 
     public function test_build_monitors_includes_flags(): void
     {
-        $api = $this->createMock(ApiClient::class);
+        $api = $this->createStub(ApiClient::class);
         $registrar = new MonitorRegistrar($api, [
             'monitors' => [
                 'urls' => ['https://example.com'],

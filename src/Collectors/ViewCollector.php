@@ -6,6 +6,7 @@ use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\View\View as ViewContract;
 use Illuminate\View\Factory;
 use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
+use Irabbi360\LaravelDebugMate\Support\InternalLog;
 use Irabbi360\LaravelDebugMate\Tracing\Span;
 use Irabbi360\LaravelDebugMate\View\TracingViewEngine;
 
@@ -29,7 +30,7 @@ class ViewCollector implements CollectorInterface
                 $this->wrapViewEngines();
             });
         } catch (\Throwable $e) {
-            \Log::debug('DebugMate ViewCollector: Error registering listeners: '.$e->getMessage());
+            InternalLog::debug('DebugMate ViewCollector: Error registering listeners: '.$e->getMessage());
         }
     }
 

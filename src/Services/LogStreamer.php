@@ -2,9 +2,9 @@
 
 namespace Irabbi360\LaravelDebugMate\Services;
 
-use Illuminate\Support\Facades\Log;
-use Irabbi360\LaravelDebugMate\Jobs\ReportLogJob;
 use Irabbi360\LaravelDebugMate\DTO\LogDataDTO;
+use Irabbi360\LaravelDebugMate\Support\InternalLog;
+use Irabbi360\LaravelDebugMate\Support\ReportingGuard;
 use Irabbi360\LaravelDebugMate\Concerns\CaptureStackTrace;
 use Irabbi360\LaravelDebugMate\Concerns\CaptureSanitization;
 use Irabbi360\LaravelDebugMate\Concerns\CaptureRequestData;
@@ -36,6 +36,17 @@ class LogStreamer
             return;
         }
 
+        ReportingGuard::run(function () use ($message, $level, $context, $traceId, $source) {
+            try {
+                $this->buildAndStreamLog($message, $level, $context, $traceId, $source);
+            } catch (\Throwable $e) {
+                InternalLog::error('DebugMate: Failed to stream log', ['error' => $e->getMessage()]);
+            }
+        });
+    }
+
+    protected function buildAndStreamLog(string $message, string $level, array $context, ?string $traceId, ?string $source): void
+    {
         // Extract exception data if present
         $stackTrace = null;
         $exceptionClass = null;
@@ -65,8 +76,8 @@ class LogStreamer
             'exception_class' => $exceptionClass,
             'file' => $exceptionFile,
             'line' => $exceptionLine,
-            'user_id' => auth()->id() ?? null,
-            'url' => request()->url() ?? null,
+            'user_id' => $this->safeUserId(),
+            'url' => $this->currentUrl(),
         ]);
 
         $this->reportFromDTO($logData);
@@ -105,11 +116,19 @@ class LogStreamer
             'timestamp' => now()->format('Y-m-d\TH:i:s\Z'),
         ];
 
-        if ($this->config['async_reporting']) {
-            $this->dispatchAsyncLog($logData);
-        } else {
-            $this->apiClient->reportLog($logData);
-        }
+        ReportingGuard::run(function () use ($logData) {
+            try {
+                $logData['context'] = $this->sanitizeContext($this->sanitizeForSerialization($logData['context']));
+
+                if ($this->config['async_reporting'] ?? false) {
+                    $this->dispatchAsyncLog($logData);
+                } else {
+                    $this->apiClient->reportLog($logData);
+                }
+            } catch (\Throwable $e) {
+                InternalLog::error('DebugMate: Failed to send log', ['error' => $e->getMessage()]);
+            }
+        });
     }
 
     /**
@@ -148,9 +167,9 @@ class LogStreamer
      */
     public function getRecentLogs(string $channel = 'stack', int $lines = 100): array
     {
-        $logPath = storage_path('logs/'.$channel.'.log');
+        $logPath = $this->logPathFor($channel);
 
-        if (!file_exists($logPath)) {
+        if ($logPath === null || ! file_exists($logPath)) {
             return [];
         }
 
@@ -168,7 +187,7 @@ class LogStreamer
     public function streamFromFile(string $filePath, int $startLine = 0): void
     {
         if (!file_exists($filePath)) {
-            Log::warning('Log file not found: '.$filePath);
+            InternalLog::warning('DebugMate: Log file not found: '.$filePath);
             return;
         }
 
@@ -190,12 +209,12 @@ class LogStreamer
     /**
      * Watch and stream logs in real-time.
      */
-    public function watch(string $channel = 'stack', callable $callback = null): void
+    public function watch(string $channel = 'stack', ?callable $callback = null): void
     {
-        $logPath = storage_path('logs/'.$channel.'.log');
+        $logPath = $this->logPathFor($channel);
 
-        if (!file_exists($logPath)) {
-            Log::warning('Log file not found: '.$logPath);
+        if ($logPath === null || ! file_exists($logPath)) {
+            InternalLog::warning('DebugMate: Log file not found for channel: '.$channel);
             return;
         }
 
@@ -209,7 +228,20 @@ class LogStreamer
                 continue;
             }
 
+            // filesize() is cached by PHP; without this the loop never sees growth.
+            clearstatcache(true, $logPath);
+
+            if (! file_exists($logPath)) {
+                $lastCheck = time();
+                continue;
+            }
+
             $currentSize = filesize($logPath);
+
+            // File was rotated or truncated: start reading from the beginning.
+            if ($currentSize < $lastSize) {
+                $lastSize = 0;
+            }
 
             if ($currentSize > $lastSize) {
                 $file = fopen($logPath, 'r');
@@ -257,64 +289,6 @@ class LogStreamer
     }
 
     /**
-     * Sanitize context to remove objects that can't be serialized for queuing.
-     */
-    protected function sanitizeForSerialization(array $context): array
-    {
-        $sanitized = [];
-
-        foreach ($context as $key => $value) {
-            if ($value === null) {
-                $sanitized[$key] = null;
-            } elseif (is_scalar($value)) {
-                // Scalars are always safe
-                $sanitized[$key] = $value;
-            } elseif (is_array($value)) {
-                // Recursively process arrays
-                $sanitized[$key] = $this->sanitizeForSerialization($value);
-            } elseif ($value instanceof \JsonSerializable) {
-                // JsonSerializable objects can be serialized
-                $sanitized[$key] = $value->jsonSerialize();
-            } elseif ($value instanceof \Throwable) {
-                // Convert exception to string representation (can't serialize objects)
-                $sanitized[$key] = [
-                    'class' => get_class($value),
-                    'message' => $value->getMessage(),
-                    'file' => $value->getFile(),
-                    'line' => $value->getLine(),
-                ];
-            } elseif (is_object($value)) {
-                // Skip other objects - they can't be serialized
-                // Skip closures, streams, resources, etc.
-                continue;
-            }
-        }
-
-        return $sanitized;
-    }
-
-    /**
-     * Sanitize context to remove sensitive data.
-     */
-    protected function sanitizeContext(array $context): array
-    {
-        $sensitiveKeys = ['password', 'token', 'api_key', 'secret', 'authorization'];
-        $sanitized = [];
-
-        foreach ($context as $key => $value) {
-            if (in_array(strtolower($key), $sensitiveKeys)) {
-                $sanitized[$key] = '***';
-            } elseif (is_array($value)) {
-                $sanitized[$key] = $this->sanitizeContext($value);
-            } else {
-                $sanitized[$key] = $value;
-            }
-        }
-
-        return $sanitized;
-    }
-
-    /**
      * Parse Laravel log line.
      */
     protected function parseLaravelLogLine(string $line): ?array
@@ -348,10 +322,40 @@ class LogStreamer
         return array_merge(
             $this->config['context'] ?? [],
             [
-                'url' => request()->url() ?? null,
-                'user_id' => auth()->id() ?? null,
+                'url' => $this->currentUrl(),
+                'user_id' => $this->safeUserId(),
             ]
         );
+    }
+
+    /**
+     * Resolve a channel's log file, refusing names that could escape storage/logs.
+     */
+    protected function logPathFor(string $channel): ?string
+    {
+        if (! preg_match('/^[A-Za-z0-9._-]+$/', $channel) || str_contains($channel, '..')) {
+            return null;
+        }
+
+        return storage_path('logs/'.$channel.'.log');
+    }
+
+    protected function currentUrl(): ?string
+    {
+        if (app()->runningInConsole() && ! app()->runningUnitTests()) {
+            return null;
+        }
+
+        return app()->bound('request') ? request()->url() : null;
+    }
+
+    protected function safeUserId(): mixed
+    {
+        try {
+            return auth()->id();
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**
@@ -359,19 +363,14 @@ class LogStreamer
      */
     protected function detectSource(): string
     {
-        if (app()->runningInConsole()) {
-            return 'cli';
-        }
-
         if (app()->runningUnitTests()) {
             return 'test';
+        }
+
+        if (app()->runningInConsole()) {
+            return 'cli';
         }
 
         return 'http';
     }
 }
-
-
-
-
-

@@ -29,10 +29,14 @@ class ExceptionHandler
             return;
         }
 
-        $errorTracker = app(ErrorTracker::class);
-
-        $exceptions->report(function (\Throwable $e) use ($errorTracker) {
-            $errorTracker->reportError($e);
+        $exceptions->report(function (\Throwable $e) {
+            // Laravel does not guard report callbacks; an exception here would
+            // replace the original one and skip the app's own logging.
+            try {
+                app(ErrorTracker::class)->reportError($e);
+            } catch (\Throwable $reportingFailure) {
+                error_log('DebugMate: failed to report exception: '.$reportingFailure->getMessage());
+            }
         });
     }
 }

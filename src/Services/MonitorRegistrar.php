@@ -96,7 +96,14 @@ class MonitorRegistrar
         ];
 
         if ($async && ($this->config['async_reporting'] ?? false)) {
-            dispatch(new RegisterMonitorsJob($payload));
+            $pending = dispatch(new RegisterMonitorsJob($payload))
+                ->onQueue((string) (config('debugmate.queue_name') ?: 'default'));
+
+            if ($connection = config('debugmate.queue_connection')) {
+                $pending->onConnection($connection);
+            }
+
+            unset($pending); // dispatches now, inside this method
 
             return true;
         }

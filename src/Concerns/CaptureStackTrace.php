@@ -67,6 +67,9 @@ trait CaptureStackTrace
                 return 'Array(' . count($arg) . ')';
             } elseif (is_resource($arg)) {
                 return 'Resource(' . get_resource_type($arg) . ')';
+            } elseif (is_string($arg)) {
+                // Never ship raw string arguments - they may be passwords or tokens.
+                return 'string(' . strlen($arg) . ')';
             } else {
                 return $arg;
             }

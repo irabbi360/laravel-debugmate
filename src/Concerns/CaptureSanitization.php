@@ -10,26 +10,40 @@ namespace Irabbi360\LaravelDebugMate\Concerns;
 trait CaptureSanitization
 {
     /**
-     * Sensitive keys that should be sanitized.
+     * Sensitive key fragments. A key is sensitive when it CONTAINS any of these.
      */
     protected array $sensitiveKeys = [
-        'password', 'token', 'api_key', 'api_secret', 'secret', 'authorization',
-        'cookie', 'session', 'credit_card', 'cvv', 'ssn', 'auth',
-        'x-api-token', 'x-csrf-token', 'x-app-token',
+        'password', 'passwd', 'passphrase', 'token', 'api_key', 'apikey', 'api-key',
+        'access_key', 'private_key', 'secret', 'authorization', 'cookie', 'session',
+        'credit_card', 'creditcard', 'card_number', 'cardnumber', 'cvv', 'cvc',
+        'ssn', 'iban', 'php-auth', 'signature', 'credential', 'x-api-token',
+        'x-csrf-token', 'x-xsrf-token', 'x-app-token', 'x-debugmate-key',
+    ];
+
+    /**
+     * Short sensitive keys that only match EXACTLY (substring matching would
+     * catch innocent keys such as "passport" or "spinner").
+     */
+    protected array $sensitiveExactKeys = [
+        'auth', 'pass', 'pwd', 'pin', 'otp', 'sid', 'key', 'code_verifier', 'one_time_password',
     ];
 
     /**
      * Sanitize array data - remove sensitive values.
      */
-    public function sanitizeData(array $data): array
+    public function sanitizeData(array $data, int $depth = 0): array
     {
+        if ($depth > 20) {
+            return ['***MAX_DEPTH***'];
+        }
+
         $sanitized = [];
 
         foreach ($data as $key => $value) {
-            if ($this->isSensitiveKey($key)) {
+            if (is_string($key) && $this->isSensitiveKey($key)) {
                 $sanitized[$key] = '***SANITIZED***';
             } elseif (is_array($value)) {
-                $sanitized[$key] = $this->sanitizeData($value);
+                $sanitized[$key] = $this->sanitizeData($value, $depth + 1);
             } elseif (is_string($value) && $this->appearsToBeCredential($value)) {
                 $sanitized[$key] = '***SANITIZED***';
             } else {
@@ -45,11 +59,89 @@ trait CaptureSanitization
      */
     public function sanitizeQuery(string $query): string
     {
-        $query = preg_replace('/password\s*=\s*[\'"][^\'"]*[\'"]/', 'password = ***', $query);
-        $query = preg_replace('/token\s*=\s*[\'"][^\'"]*[\'"]/', 'token = ***', $query);
-        $query = preg_replace('/api_key\s*=\s*[\'"][^\'"]*[\'"]/', 'api_key = ***', $query);
-        $query = preg_replace('/api_secret\s*=\s*[\'"][^\'"]*[\'"]/', 'api_secret = ***', $query);
-        return $query;
+        return (string) preg_replace(
+            '/\b(password|passwd|token|api_key|api_secret|secret)\s*=\s*([\'"])[^\'"]*\2/i',
+            '$1 = ***',
+            $query
+        );
+    }
+
+    /**
+     * Mask sensitive query-string parameters in a URL, keeping the URL usable
+     * for debugging (path and non-sensitive parameters are preserved).
+     */
+    public function sanitizeUrl(?string $url): ?string
+    {
+        if ($url === null || $url === '' || ! str_contains($url, '?')) {
+            return $url;
+        }
+
+        [$base, $query] = explode('?', $url, 2);
+        $fragment = '';
+
+        if (str_contains($query, '#')) {
+            [$query, $fragment] = explode('#', $query, 2);
+            $fragment = '#'.$fragment;
+        }
+
+        return $base.'?'.$this->sanitizeQueryString($query).$fragment;
+    }
+
+    /**
+     * Mask sensitive parameters in a raw query string (without the leading "?").
+     */
+    public function sanitizeQueryString(?string $query): ?string
+    {
+        if ($query === null || $query === '') {
+            return $query;
+        }
+
+        $pairs = explode('&', $query);
+
+        foreach ($pairs as $i => $pair) {
+            if ($pair === '') {
+                continue;
+            }
+
+            [$name, $value] = array_pad(explode('=', $pair, 2), 2, null);
+            $decodedName = urldecode($name);
+            // Strip array brackets: "user[password]" -> check "password" too
+            $leafName = preg_replace('/^.*\[([^\]]*)\]$/', '$1', $decodedName);
+
+            $sensitive = $this->isSensitiveKey($decodedName)
+                || ($leafName !== '' && $this->isSensitiveKey($leafName))
+                || ($value !== null && $this->appearsToBeCredential(urldecode($value)));
+
+            if ($sensitive && $value !== null) {
+                $pairs[$i] = $name.'=***';
+            }
+        }
+
+        return implode('&', $pairs);
+    }
+
+    /**
+     * Redact query bindings. Numbers, booleans and nulls are kept (they are
+     * rarely sensitive and are useful for debugging); strings are replaced
+     * because they routinely carry emails, hashes and tokens.
+     */
+    public function sanitizeBindings(array $bindings): array
+    {
+        if (! (bool) config('debugmate.redact_query_bindings', true)) {
+            return $bindings;
+        }
+
+        return array_map(function ($binding) {
+            if ($binding === null || is_bool($binding) || is_int($binding) || is_float($binding)) {
+                return $binding;
+            }
+
+            if ($binding instanceof \DateTimeInterface) {
+                return $binding->format('Y-m-d H:i:s');
+            }
+
+            return '***';
+        }, array_values($bindings));
     }
 
     /**
@@ -63,8 +155,12 @@ trait CaptureSanitization
     /**
      * Sanitize for serialization - handle non-serializable objects.
      */
-    public function sanitizeForSerialization(array $context): array
+    public function sanitizeForSerialization(array $context, int $depth = 0): array
     {
+        if ($depth > 20) {
+            return ['***MAX_DEPTH***'];
+        }
+
         $sanitized = [];
 
         foreach ($context as $key => $value) {
@@ -73,9 +169,7 @@ trait CaptureSanitization
             } elseif (is_scalar($value)) {
                 $sanitized[$key] = $value;
             } elseif (is_array($value)) {
-                $sanitized[$key] = $this->sanitizeForSerialization($value);
-            } elseif ($value instanceof \JsonSerializable) {
-                $sanitized[$key] = $value->jsonSerialize();
+                $sanitized[$key] = $this->sanitizeForSerialization($value, $depth + 1);
             } elseif ($value instanceof \Throwable) {
                 $sanitized[$key] = [
                     'class' => get_class($value),
@@ -83,10 +177,19 @@ trait CaptureSanitization
                     'file' => $value->getFile(),
                     'line' => $value->getLine(),
                 ];
-            } elseif (is_object($value)) {
-                // Skip non-serializable objects
-                continue;
+            } elseif ($value instanceof \JsonSerializable) {
+                try {
+                    $serialized = $value->jsonSerialize();
+                    $sanitized[$key] = is_array($serialized)
+                        ? $this->sanitizeForSerialization($serialized, $depth + 1)
+                        : (is_scalar($serialized) || $serialized === null ? $serialized : get_class($value));
+                } catch (\Throwable) {
+                    $sanitized[$key] = get_class($value);
+                }
+            } elseif ($value instanceof \Stringable) {
+                $sanitized[$key] = (string) $value;
             }
+            // Other objects, closures and resources are skipped.
         }
 
         return $sanitized;
@@ -98,11 +201,25 @@ trait CaptureSanitization
     protected function isSensitiveKey(string $key): bool
     {
         $key = strtolower($key);
-        foreach ($this->sensitiveKeys as $sensitiveKey) {
-            if (strpos($key, strtolower($sensitiveKey)) !== false) {
+
+        foreach ($this->sensitiveExactKeys as $exactKey) {
+            if ($key === strtolower($exactKey)) {
                 return true;
             }
         }
+
+        foreach ($this->sensitiveKeys as $sensitiveKey) {
+            if (str_contains($key, strtolower($sensitiveKey))) {
+                return true;
+            }
+        }
+
+        foreach ((array) config('debugmate.sensitive_keys', []) as $customKey) {
+            if (is_string($customKey) && $customKey !== '' && str_contains($key, strtolower($customKey))) {
+                return true;
+            }
+        }
+
         return false;
     }
 
@@ -111,14 +228,27 @@ trait CaptureSanitization
      */
     protected function appearsToBeCredential(string $value): bool
     {
-        // Check for JWT-like strings (xxxxx.xxxxx.xxxxx)
-        if (preg_match('/^[A-Za-z0-9\-._~+\/]+=*\.[A-Za-z0-9\-._~+\/]+=*\.[A-Za-z0-9\-._~+\/]+=*$/', $value)) {
+        // Bearer / Basic authorization values
+        if (preg_match('/^(Bearer|Basic)\s+\S+/i', $value)) {
             return true;
         }
-        // Check for API key-like strings (long hex or alphanumeric)
-        if (strlen($value) > 40 && preg_match('/^[A-Fa-f0-9]{32,}$/', $value)) {
+        // Password hashes (bcrypt, argon2)
+        if (preg_match('/^\$(2[abxy]|argon2i|argon2id)\$/', $value)) {
             return true;
         }
+        // JWT-like strings (xxxxx.xxxxx.xxxxx)
+        if (strlen($value) > 20 && preg_match('/^[A-Za-z0-9\-_]+=*\.[A-Za-z0-9\-_]+=*\.[A-Za-z0-9\-_+\/]+=*$/', $value)) {
+            return true;
+        }
+        // API key-like strings (long hex)
+        if (strlen($value) >= 32 && preg_match('/^[A-Fa-f0-9]+$/', $value)) {
+            return true;
+        }
+        // Common vendor key prefixes (Stripe, GitHub, Slack, AWS)
+        if (preg_match('/^(sk|pk|rk)_(live|test)_[A-Za-z0-9]{10,}$|^gh[pousr]_[A-Za-z0-9]{20,}$|^xox[abpr]-[A-Za-z0-9-]{10,}$|^AKIA[0-9A-Z]{16}$/', $value)) {
+            return true;
+        }
+
         return false;
     }
 
@@ -130,4 +260,3 @@ trait CaptureSanitization
         $this->sensitiveKeys = array_merge($this->sensitiveKeys, $keys);
     }
 }
-

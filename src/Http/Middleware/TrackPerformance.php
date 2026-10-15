@@ -4,8 +4,8 @@ namespace Irabbi360\LaravelDebugMate\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
+use Irabbi360\LaravelDebugMate\Support\InternalLog;
 use Symfony\Component\HttpFoundation\Response;
 
 class TrackPerformance
@@ -36,12 +36,24 @@ class TrackPerformance
 
         // Start collecting — with distributed tracing support
         // Check for incoming traceparent header (from upstream service)
-        $traceParentHeader = $request->header('traceparent');
-        $this->monitor->startRequest($traceParentHeader);
+        $this->monitor->startRequest($request->header('traceparent'));
+        $request->attributes->set('debugmate_traced', true);
 
         $response = $next($request);
 
-        // Flush ONE batched payload after the response is built
+        // Stop the clock now; the payload is sent in terminate(), after the
+        // response has gone to the client, so reporting never adds latency.
+        $this->monitor->finishRequest();
+
+        return $response;
+    }
+
+    public function terminate(Request $request, Response $response): void
+    {
+        if (! $request->attributes->get('debugmate_traced') || ! $this->monitor->hasActiveTrace()) {
+            return;
+        }
+
         try {
             $this->monitor->flushRequest(
                 endpoint: '/' . ltrim($request->path(), '/'),
@@ -49,9 +61,7 @@ class TrackPerformance
                 statusCode: $response->getStatusCode(),
             );
         } catch (\Throwable $e) {
-            Log::error('DebugMate: flushRequest failed', ['error' => $e->getMessage()]);
+            InternalLog::error('DebugMate: flushRequest failed', ['error' => $e->getMessage()]);
         }
-
-        return $response;
     }
 }

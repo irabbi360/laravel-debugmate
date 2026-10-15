@@ -14,7 +14,7 @@ trait CaptureGeoInfo
      */
     public function captureGeoInfo(?string $ipAddress = null): array
     {
-        $ip = $ipAddress ?? (function_exists('request') ? request()->ip() : '0.0.0.0');
+        $ip = $ipAddress ?? (function_exists('request') ? request()->ip() : null) ?? '0.0.0.0';
 
         return [
             'ip_address' => $ip,
@@ -91,27 +91,8 @@ trait CaptureGeoInfo
             return $ip;
         }
 
-        // For IPv4: replace last octet with .0
-        if (strpos($ip, '.') !== false) {
-            $parts = explode('.', $ip);
-            if (count($parts) === 4) {
-                $parts[3] = '0';
-                return implode('.', $parts);
-            }
-        }
-
-        // For IPv6: replace last 80 bits with zeros
-        if (strpos($ip, ':') !== false) {
-            $parts = explode(':', $ip);
-            if (count($parts) >= 4) {
-                for ($i = 4; $i < count($parts); $i++) {
-                    $parts[$i] = '0';
-                }
-                return implode(':', $parts);
-            }
-        }
-
-        return $ip;
+        // IPv4 -> a.b.c.0, IPv6 -> first 48 bits (handles "::" compression)
+        return (string) \Irabbi360\LaravelDebugMate\Support\IpAnonymizer::anonymize($ip);
     }
 }
 

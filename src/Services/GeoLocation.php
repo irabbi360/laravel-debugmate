@@ -3,14 +3,15 @@
 namespace Irabbi360\LaravelDebugMate\Services;
 
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
+use Irabbi360\LaravelDebugMate\Support\InternalLog;
 
 /**
  * GeoLocation Service
  *
  * Provides IP geolocation lookup to identify visitor country and city.
- * Uses ip-api.com free tier for lookups and caches results to minimize API calls.
+ * Uses the configured endpoint (debugmate.geolocation.endpoint, ip-api.com by
+ * default) and caches results to minimize API calls.
  */
 class GeoLocation
 {
@@ -23,7 +24,7 @@ class GeoLocation
      */
     public function getLocationByIp(string $ip): array
     {
-        // Return empty if IP is private/loopback
+        // Return empty if IP is invalid or private/loopback
         if ($this->isPrivateIp($ip)) {
             return [
                 'country' => null,
@@ -34,15 +35,8 @@ class GeoLocation
             ];
         }
 
-        // Check cache first
-        $cacheKey = "debugmate_geo_{$ip}";
-        $cached = Cache::get($cacheKey);
-        if ($cached) {
-            return $cached;
-        }
-
         // If geolocation is disabled, return empty
-        if (!config('debugmate.enable_geolocation', false)) {
+        if (! config('debugmate.enable_geolocation', false)) {
             return [
                 'country' => null,
                 'country_code' => null,
@@ -52,9 +46,20 @@ class GeoLocation
             ];
         }
 
+        $cacheKey = 'debugmate_geo_'.hash('sha256', $ip);
+
         try {
-            // Lookup from free IP geolocation API
-            $response = Http::timeout(2)->get(self::API_ENDPOINT . $ip);
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached)) {
+                return $cached;
+            }
+
+            $endpoint = (string) config('debugmate.geolocation.endpoint', self::API_ENDPOINT);
+            $timeout = (float) config('debugmate.geolocation.timeout', 1);
+
+            $response = Http::timeout($timeout)
+                ->connectTimeout($timeout)
+                ->get(rtrim($endpoint, '/').'/'.rawurlencode($ip));
 
             if ($response->successful() && $response->json('status') === 'success') {
                 $data = $response->json();
@@ -73,13 +78,25 @@ class GeoLocation
                 return $result;
             }
         } catch (\Throwable $e) {
-            Log::debug('DebugMate: Failed to lookup IP geolocation', [
-                'ip' => $ip,
+            InternalLog::debug('DebugMate: Failed to lookup IP geolocation', [
                 'error' => $e->getMessage(),
             ]);
         }
 
-        // Return empty on failure
+        // Cache the miss briefly so a slow or down provider doesn't add its
+        // timeout to every request.
+        try {
+            Cache::put($cacheKey, [
+                'country' => null,
+                'country_code' => null,
+                'city' => null,
+                'latitude' => null,
+                'longitude' => null,
+            ], 600);
+        } catch (\Throwable) {
+            // cache unavailable - ignore
+        }
+
         return [
             'country' => null,
             'country_code' => null,

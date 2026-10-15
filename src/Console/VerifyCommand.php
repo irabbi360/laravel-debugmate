@@ -30,6 +30,10 @@ class VerifyCommand extends Command
         $this->components->twoColumnDetail('API URL', (string) config('debugmate.api_url'));
         $this->components->twoColumnDetail('Project key', $this->maskKey($projectKey));
 
+        if (ApiClient::isInsecureUrl((string) config('debugmate.api_url'))) {
+            $this->components->warn('DEBUGMATE_API_URL uses plain HTTP - the project key is sent unencrypted. Use https:// in production.');
+        }
+
         $this->components->info('Verifying API connection (POST /api/debugmate/verify-token)...');
 
         if (! $apiClient->verifyConnection()) {

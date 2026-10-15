@@ -3,6 +3,7 @@
 namespace Irabbi360\LaravelDebugMate\Services;
 
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
 use Irabbi360\LaravelDebugMate\Support\InternalLog;
 use Irabbi360\LaravelDebugMate\Support\PayloadLimiter;
@@ -12,6 +13,8 @@ class ApiClient
     protected Client $client;
     protected string $apiUrl;
     protected string $debugmateKey;
+
+    protected static bool $insecureWarningLogged = false;
 
     public function __construct(string $apiUrl, string $debugmateKey)
     {
@@ -93,7 +96,8 @@ class ApiClient
         } catch (RequestException $e) {
             $status = $e->getResponse()?->getStatusCode();
 
-            if (in_array($status, [401, 403], true)) {
+            // No response (DNS, refused, TLS) or an auth rejection: falling back won't help.
+            if ($status === null || in_array($status, [401, 403], true)) {
                 InternalLog::error('DebugMate connection verification failed', [
                     'error' => $e->getMessage(),
                     'code' => $e->getCode(),
@@ -101,22 +105,29 @@ class ApiClient
 
                 return false;
             }
+        } catch (GuzzleException $e) {
+            InternalLog::error('DebugMate connection verification failed', [
+                'error' => $e->getMessage(),
+                'code' => $e->getCode(),
+            ]);
 
-            // Older APIs only expose GET verify-token.
-            try {
-                $response = $this->client->get('/api/debugmate/verify-token', [
-                    'headers' => $this->getHeaders(),
-                ]);
+            return false;
+        }
 
-                return $response->getStatusCode() === 200;
-            } catch (RequestException $fallback) {
-                InternalLog::error('DebugMate connection verification failed', [
-                    'error' => $fallback->getMessage(),
-                    'code' => $fallback->getCode(),
-                ]);
+        // Older APIs only expose GET verify-token.
+        try {
+            $response = $this->client->get('/api/debugmate/verify-token', [
+                'headers' => $this->getHeaders(),
+            ]);
 
-                return false;
-            }
+            return $response->getStatusCode() === 200;
+        } catch (GuzzleException $fallback) {
+            InternalLog::error('DebugMate connection verification failed', [
+                'error' => $fallback->getMessage(),
+                'code' => $fallback->getCode(),
+            ]);
+
+            return false;
         }
     }
 
@@ -125,6 +136,10 @@ class ApiClient
      */
     public function getProjectInfo(): ?array
     {
+        if (! $this->hasConfiguredKey()) {
+            return null;
+        }
+
         try {
             $response = $this->client->get('/api/debugmate/project', [
                 'headers' => $this->getHeaders(),
@@ -133,7 +148,7 @@ class ApiClient
             if ($response->getStatusCode() === 200) {
                 return json_decode($response->getBody()->getContents(), true);
             }
-        } catch (RequestException $e) {
+        } catch (\Throwable $e) {
             InternalLog::error('DebugMate project info fetch failed', [
                 'error' => $e->getMessage(),
             ]);
@@ -154,6 +169,8 @@ class ApiClient
 
             return false;
         }
+
+        $this->warnIfInsecureTransport();
 
         try {
             $payload = array_merge($data, [
@@ -178,7 +195,9 @@ class ApiClient
             ]);
 
             return false;
-        } catch (RequestException $e) {
+        } catch (\Throwable $e) {
+            // Any failure (connection refused, DNS, timeout, bad response,
+            // JSON encoding) must never break the host application.
             InternalLog::error('DebugMate API request failed', [
                 'endpoint' => $endpoint,
                 'error' => $e->getMessage(),
@@ -187,6 +206,45 @@ class ApiClient
 
             return false;
         }
+    }
+
+    /**
+     * The project key is sent on every request; warn (once per process) when
+     * it would travel in clear text to a non-local host.
+     */
+    protected function warnIfInsecureTransport(): void
+    {
+        if (static::$insecureWarningLogged || ! $this->isInsecureRemoteUrl()) {
+            return;
+        }
+
+        static::$insecureWarningLogged = true;
+
+        InternalLog::warning('DebugMate API URL uses plain HTTP; the project key is sent unencrypted. Use https:// for DEBUGMATE_API_URL.', [
+            'api_url' => $this->apiUrl,
+        ]);
+    }
+
+    public function isInsecureRemoteUrl(): bool
+    {
+        return static::isInsecureUrl($this->apiUrl);
+    }
+
+    /**
+     * True for plain-HTTP URLs that point anywhere other than this machine.
+     */
+    public static function isInsecureUrl(string $url): bool
+    {
+        $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
+        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
+
+        if ($scheme !== 'http') {
+            return false;
+        }
+
+        return ! in_array($host, ['localhost', '127.0.0.1', '::1', '[::1]'], true)
+            && ! str_ends_with($host, '.test')
+            && ! str_ends_with($host, '.localhost');
     }
 
     /**

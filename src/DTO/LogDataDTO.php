@@ -22,7 +22,7 @@ class LogDataDTO extends BaseDTO
         public readonly ?string $exception_class = null,
         public readonly ?string $file = null,
         public readonly ?int $line = null,
-        public readonly ?int $user_id = null,
+        public readonly int|string|null $user_id = null,
         public readonly ?string $url = null,
         public readonly ?string $timestamp = null,
     ) {}
@@ -40,7 +40,7 @@ class LogDataDTO extends BaseDTO
             exception_class: $data['exception_class'] ?? null,
             file: $data['file'] ?? null,
             line: $data['line'] ?? null,
-            user_id: $data['user_id'] ?? null,
+            user_id: self::normalizeUserId($data['user_id'] ?? null),
             url: $data['url'] ?? null,
             timestamp: $data['timestamp'] ?? now()->format('Y-m-d\TH:i:s\Z'),
         );

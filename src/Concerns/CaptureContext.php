@@ -28,16 +28,22 @@ trait CaptureContext
      */
     public function captureUserContext(): array
     {
-        $user = auth()->user();
+        try {
+            $user = auth()->user();
+        } catch (\Throwable) {
+            return [];
+        }
 
         if (!$user) {
             return [];
         }
 
+        $sendPii = (bool) config('debugmate.send_user_pii', true);
+
         return [
-            'id' => $user->id ?? null,
-            'name' => $user->name ?? null,
-            'email' => $user->email ?? null,
+            'id' => $user->getAuthIdentifier(),
+            'name' => $sendPii ? ($user->name ?? null) : null,
+            'email' => $sendPii ? ($user->email ?? null) : null,
             'ip' => request()->ip() ?? null,
         ];
     }
@@ -62,12 +68,13 @@ trait CaptureContext
      */
     public function captureSessionContext(): array
     {
-        if (!function_exists('session')) {
+        if (!function_exists('session') || !session()->isStarted()) {
             return [];
         }
 
+        // Never send the live session id (it could be used to hijack the session).
         return [
-            'session_id' => session()->getId() ?? null,
+            'session_id_hash' => substr(hash('sha256', (string) session()->getId()), 0, 16),
             'session_name' => session()->getName() ?? null,
         ];
     }

@@ -22,9 +22,8 @@ trait AsyncDispatch
     public function dispatchErrorReport(array $errorData): void
     {
         try {
-            dispatch(new ReportErrorJob($this->limitPayload($errorData)))
-                ->onQueue($this->getQueueName('errors'));
-        } catch (\Exception $e) {
+            $this->dispatchToQueue(new ReportErrorJob($this->limitPayload($errorData)));
+        } catch (\Throwable $e) {
             InternalLog::error('DebugMate: Failed to dispatch error reporting job', [
                 'error' => $e->getMessage(),
             ]);
@@ -38,9 +37,8 @@ trait AsyncDispatch
     public function dispatchLogReport(array $logData): void
     {
         try {
-            dispatch(new ReportLogJob($this->limitPayload($logData)))
-                ->onQueue($this->getQueueName('logs'));
-        } catch (\Exception $e) {
+            $this->dispatchToQueue(new ReportLogJob($this->limitPayload($logData)));
+        } catch (\Throwable $e) {
             InternalLog::error('DebugMate: Failed to dispatch log reporting job', [
                 'error' => $e->getMessage(),
             ]);
@@ -54,9 +52,8 @@ trait AsyncDispatch
     public function dispatchMetricReport(array $metricData): void
     {
         try {
-            dispatch(new ReportMetricJob($this->limitPayload($metricData)))
-                ->onQueue($this->getQueueName('metrics'));
-        } catch (\Exception $e) {
+            $this->dispatchToQueue(new ReportMetricJob($this->limitPayload($metricData)));
+        } catch (\Throwable $e) {
             InternalLog::error('DebugMate: Failed to dispatch metric reporting job', [
                 'error' => $e->getMessage(),
             ]);
@@ -70,9 +67,8 @@ trait AsyncDispatch
     public function dispatchAnalyticsReport(array $analyticsData): void
     {
         try {
-            dispatch(new ReportAnalyticsJob($this->limitPayload($analyticsData)))
-                ->onQueue($this->getQueueName('analytics'));
-        } catch (\Exception $e) {
+            $this->dispatchToQueue(new ReportAnalyticsJob($this->limitPayload($analyticsData)));
+        } catch (\Throwable $e) {
             InternalLog::error('DebugMate: Failed to dispatch analytics reporting job', [
                 'error' => $e->getMessage(),
             ]);
@@ -102,12 +98,29 @@ trait AsyncDispatch
     }
 
     /**
-     * Get queue name for a report type.
-     * Override in service class to use config values.
+     * Dispatch a DebugMate job on the configured connection and queue.
      */
-    protected function getQueueName(string $type): string
+    protected function dispatchToQueue(object $job, int $delaySeconds = 0): void
     {
-        return 'default'; //config('queue.default', 'default');
+        $pending = dispatch($job)->onQueue($this->getQueueName());
+
+        if ($connection = config('debugmate.queue_connection')) {
+            $pending->onConnection($connection);
+        }
+
+        if ($delaySeconds > 0) {
+            $pending->delay(now()->addSeconds($delaySeconds));
+        }
+    }
+
+    /**
+     * Queue name for DebugMate jobs (debugmate.queue_name).
+     */
+    protected function getQueueName(): string
+    {
+        $queue = config('debugmate.queue_name');
+
+        return is_string($queue) && $queue !== '' ? $queue : 'default';
     }
 
     /**
@@ -125,10 +138,8 @@ trait AsyncDispatch
     public function dispatchWithDelay(string $jobClass, array $data, int $seconds): void
     {
         try {
-            dispatch(new $jobClass($this->limitPayload($data)))
-                ->onQueue($this->getQueueName('default'))
-                ->delay(now()->addSeconds($seconds));
-        } catch (\Exception $e) {
+            $this->dispatchToQueue(new $jobClass($this->limitPayload($data)), $seconds);
+        } catch (\Throwable $e) {
             InternalLog::error('DebugMate: Failed to dispatch delayed job', [
                 'error' => $e->getMessage(),
             ]);
@@ -141,9 +152,10 @@ trait AsyncDispatch
     public function dispatchBatch(string $jobClass, array $items, string $type = 'default'): void
     {
         try {
-            $jobs = array_map(fn($item) => new $jobClass($this->limitPayload($item)), $items);
-            dispatch($jobs);
-        } catch (\Exception $e) {
+            foreach ($items as $item) {
+                $this->dispatchToQueue(new $jobClass($this->limitPayload($item)));
+            }
+        } catch (\Throwable $e) {
             InternalLog::error('DebugMate: Failed to batch dispatch jobs', [
                 'error' => $e->getMessage(),
                 'count' => count($items),

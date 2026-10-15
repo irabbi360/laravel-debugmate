@@ -5,6 +5,7 @@ namespace Irabbi360\LaravelDebugMate\Collectors;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
+use Irabbi360\LaravelDebugMate\Support\InternalLog;
 
 /**
  * QueryCollector - Tracks database queries for performance monitoring.
@@ -46,11 +47,11 @@ class QueryCollector implements CollectorInterface
                 try {
                     $this->recordQuery($queryObj);
                 } catch (\Throwable $e) {
-                    \Log::debug('DebugMate QueryCollector: Error recording query: ' . $e->getMessage());
+                    InternalLog::debug('DebugMate QueryCollector: Error recording query: ' . $e->getMessage());
                 }
             });
         } catch (\Throwable $e) {
-            \Log::debug('DebugMate QueryCollector: Error registering listener: ' . $e->getMessage());
+            InternalLog::debug('DebugMate QueryCollector: Error registering listener: ' . $e->getMessage());
         }
     }
 

@@ -29,8 +29,14 @@ class InternalLog
 
     protected static function write(string $level, string $message, array $context): void
     {
-        Log::log($level, $message, array_merge($context, [
-            self::CONTEXT_KEY => true,
-        ]));
+        try {
+            Log::log($level, $message, array_merge($context, [
+                self::CONTEXT_KEY => true,
+            ]));
+        } catch (\Throwable $e) {
+            // The logger itself is broken (unwritable file, bad channel config).
+            // Never let SDK diagnostics take down the host application.
+            error_log('DebugMate: '.$message.' ('.$e->getMessage().')');
+        }
     }
 }

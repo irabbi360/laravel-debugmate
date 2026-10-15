@@ -4,10 +4,12 @@ namespace Irabbi360\LaravelDebugMate\Services;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
+use Irabbi360\LaravelDebugMate\Concerns\CaptureSanitization;
 
 class ContextCollector
 {
+    use CaptureSanitization;
+
     /**
      * Collect all contextual information about the error
      */
@@ -47,12 +49,14 @@ class ContextCollector
         return [
             'method' => $request->method(),
             'path' => $request->path(),
-            'full_url' => $request->fullUrl(),
+            'full_url' => $this->sanitizeUrl($request->fullUrl()),
             'route_name' => $route?->getName() ?? null,
             'route_action' => $route?->getActionName() ?? null,
             'controller' => $route?->getControllerClass() ?? null,
             'middleware' => $route?->middleware() ?? [],
-            'parameters' => $route?->parameters() ?? [],
+            'parameters' => $this->sanitizeData(
+                array_map(fn ($value) => $this->formatValue($value), $route?->parameters() ?? [])
+            ),
         ];
     }
 
@@ -92,17 +96,17 @@ class ContextCollector
      */
     protected function getHeadersInfo(Request $request): array
     {
-        $headers = $request->headers->all();
-        $sensitive = ['authorization', 'cookie', 'x-api-key', 'x-access-token', 'authentication'];
-
-        $sanitized = [];
-        foreach ($headers as $key => $value) {
-            if (!in_array(strtolower($key), $sensitive)) {
-                $sanitized[$key] = is_array($value) ? implode(', ', $value) : $value;
-            }
+        $headers = [];
+        foreach ($request->headers->all() as $key => $value) {
+            $headers[$key] = is_array($value) ? implode(', ', $value) : $value;
         }
 
-        return $sanitized;
+        // Referer may carry tokens in its query string.
+        if (isset($headers['referer'])) {
+            $headers['referer'] = $this->sanitizeUrl($headers['referer']);
+        }
+
+        return $this->sanitizeData($headers);
     }
 
     /**
@@ -110,23 +114,22 @@ class ContextCollector
      */
     protected function getSessionInfo(Request $request): array
     {
-        if (!session()->isStarted()) {
+        if (! $request->hasSession() || ! $request->session()->isStarted()) {
             return [];
         }
 
-        $session = session()->all();
-        $sensitive = ['password', 'token', 'secret', 'api_key', 'credit_card'];
+        $session = $request->session();
 
-        $sanitized = [];
-        foreach ($session as $key => $value) {
-            if (!$this->isSensitive($key, $sensitive)) {
-                $sanitized[$key] = $this->formatValue($value);
-            }
+        $data = [];
+        foreach ($session->all() as $key => $value) {
+            $data[$key] = $this->formatValue($value);
         }
 
         return [
-            'id' => session()->getId(),
-            'data' => $sanitized,
+            // Never send the live session id - anyone who can read the report
+            // could hijack the session. A one-way hash still allows correlation.
+            'id_hash' => substr(hash('sha256', (string) $session->getId()), 0, 16),
+            'data' => $this->sanitizeData($data),
             'lifetime' => config('session.lifetime'),
         ];
     }
@@ -136,17 +139,9 @@ class ContextCollector
      */
     protected function getCookiesInfo(Request $request): array
     {
-        $cookies = $request->cookies->all();
-        $sensitive = ['session', 'token', 'auth', 'api_key'];
-
-        $sanitized = [];
-        foreach ($cookies as $key => $value) {
-            if (!$this->isSensitive($key, $sensitive)) {
-                $sanitized[$key] = is_string($value) ? substr($value, 0, 50) : $value;
-            }
-        }
-
-        return $sanitized;
+        // Cookie values are session / remember-me credentials in most apps.
+        // Only report which cookies were present.
+        return array_fill_keys(array_keys($request->cookies->all()), '***');
     }
 
     /**
@@ -154,14 +149,9 @@ class ContextCollector
      */
     protected function getBodyInfo(Request $request): array
     {
-        $input = $request->all();
-        $sensitive = ['password', 'token', 'secret', 'credit_card', 'ssn', 'api_key'];
-
         $sanitized = [];
-        foreach ($input as $key => $value) {
-            if (!$this->isSensitive($key, $sensitive)) {
-                $sanitized[$key] = $this->formatValue($value);
-            }
+        foreach ($this->sanitizeData($request->all()) as $key => $value) {
+            $sanitized[$key] = $value === '***SANITIZED***' ? $value : $this->formatValue($value);
         }
 
         return $sanitized;
@@ -186,24 +176,39 @@ class ContextCollector
      */
     protected function getUserInfo(Request $request): array
     {
-        $user = auth()->user();
+        try {
+            $user = auth()->user();
+        } catch (\Throwable) {
+            // e.g. the database is down - which may be the error being reported
+            return ['authenticated' => null];
+        }
 
-        if (!$user) {
+        if (! $user) {
             return [
                 'authenticated' => false,
                 'guard' => auth()->getDefaultDriver(),
             ];
         }
 
-        return [
+        $info = [
             'authenticated' => true,
-            'id' => $user->getKey(),
-            'name' => $user->name ?? null,
-            'email' => $user->email ?? null,
+            'id' => method_exists($user, 'getAuthIdentifier') ? $user->getAuthIdentifier() : null,
             'guard' => auth()->getDefaultDriver(),
-            'roles' => method_exists($user, 'getRoles') ? $user->getRoles() : [],
-            'permissions' => method_exists($user, 'getPermissions') ? $user->getPermissions() : [],
         ];
+
+        if ((bool) config('debugmate.send_user_pii', true)) {
+            $info['name'] = $user->name ?? null;
+            $info['email'] = $user->email ?? null;
+        }
+
+        try {
+            $info['roles'] = method_exists($user, 'getRoles') ? $user->getRoles() : [];
+            $info['permissions'] = method_exists($user, 'getPermissions') ? $user->getPermissions() : [];
+        } catch (\Throwable) {
+            // optional data - ignore
+        }
+
+        return $info;
     }
 
     /**
@@ -220,24 +225,64 @@ class ContextCollector
         }
 
         try {
-            $head = trim(file_get_contents(base_path('.git/HEAD')));
-            $branch = str_replace('ref: refs/heads/', '', $head);
+            $head = trim((string) @file_get_contents($gitDir.'/HEAD'));
 
-            $commitFile = base_path('.git/refs/heads/' . $branch);
-            $commit = trim(file_get_contents($commitFile));
+            if ($head === '') {
+                return ['available' => false];
+            }
+
+            // Detached HEAD: the file holds the commit hash itself.
+            if (! str_starts_with($head, 'ref: ')) {
+                return [
+                    'available' => true,
+                    'branch' => null,
+                    'commit' => substr($head, 0, 7),
+                    'commit_full' => $head,
+                ];
+            }
+
+            $ref = substr($head, 5);
+            $branch = str_replace('refs/heads/', '', $ref);
+            $commit = $this->resolveGitRef($gitDir, $ref);
 
             return [
                 'available' => true,
                 'branch' => $branch,
-                'commit' => substr($commit, 0, 7),
+                'commit' => $commit ? substr($commit, 0, 7) : null,
                 'commit_full' => $commit,
             ];
-        } catch (\Exception $e) {
-            return [
-                'available' => false,
-                'error' => $e->getMessage(),
-            ];
+        } catch (\Throwable) {
+            return ['available' => false];
         }
+    }
+
+    /**
+     * Resolve a ref from a loose ref file or, after `git gc`, from packed-refs.
+     */
+    protected function resolveGitRef(string $gitDir, string $ref): ?string
+    {
+        // Reject anything that could escape the .git directory.
+        if (str_contains($ref, '..')) {
+            return null;
+        }
+
+        $looseRef = $gitDir.'/'.$ref;
+        if (is_file($looseRef)) {
+            $commit = trim((string) @file_get_contents($looseRef));
+
+            return $commit !== '' ? $commit : null;
+        }
+
+        $packedRefs = $gitDir.'/packed-refs';
+        if (is_file($packedRefs)) {
+            foreach (file($packedRefs, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+                if (str_ends_with($line, ' '.$ref)) {
+                    return strtok($line, ' ') ?: null;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -288,13 +333,20 @@ class ContextCollector
      */
     protected function collectQueryInfo(): array
     {
-        $queryLog = DB::getQueryLog();
+        try {
+            $queryLog = DB::getQueryLog();
+        } catch (\Throwable) {
+            $queryLog = [];
+        }
+
+        // Keep the most recent queries only; the log can be huge in long requests.
+        $queryLog = array_slice($queryLog, -100);
 
         $processed = [];
         foreach ($queryLog as $query) {
             $processed[] = [
                 'query' => $query['query'],
-                'bindings' => $query['bindings'] ?? [],
+                'bindings' => $this->sanitizeBindings($query['bindings'] ?? []),
                 'time' => $query['time'] ?? 0,
             ];
         }
@@ -310,11 +362,12 @@ class ContextCollector
      */
     protected function detectDevice(string $userAgent): string
     {
-        if (preg_match('/mobile|android|iphone|ipad|phone/i', $userAgent)) {
-            return 'Mobile';
-        }
-        if (preg_match('/tablet|ipad/i', $userAgent)) {
+        if (preg_match('/tablet|ipad|playbook|silk/i', $userAgent)
+            || (preg_match('/android/i', $userAgent) && ! preg_match('/mobile/i', $userAgent))) {
             return 'Tablet';
+        }
+        if (preg_match('/mobile|iphone|ipod|android|phone/i', $userAgent)) {
+            return 'Mobile';
         }
         return 'Desktop';
     }
@@ -324,33 +377,23 @@ class ContextCollector
      */
     protected function detectBrowser(string $userAgent): string
     {
-        if (preg_match('/chrome/i', $userAgent)) {
+        // Order matters: Edge and Opera also send "Chrome", Chrome also sends "Safari".
+        if (preg_match('/edg(e|a|ios)?\//i', $userAgent)) {
+            return 'Edge';
+        }
+        if (preg_match('/opr\/|opera/i', $userAgent)) {
+            return 'Opera';
+        }
+        if (preg_match('/chrome|crios/i', $userAgent)) {
             return 'Chrome';
         }
-        if (preg_match('/firefox/i', $userAgent)) {
+        if (preg_match('/firefox|fxios/i', $userAgent)) {
             return 'Firefox';
         }
         if (preg_match('/safari/i', $userAgent)) {
             return 'Safari';
         }
-        if (preg_match('/edge/i', $userAgent)) {
-            return 'Edge';
-        }
         return 'Unknown';
-    }
-
-    /**
-     * Check if key contains sensitive information
-     */
-    protected function isSensitive(string $key, array $sensitiveKeys): bool
-    {
-        $key = strtolower($key);
-        foreach ($sensitiveKeys as $sensitive) {
-            if (strpos($key, strtolower($sensitive)) !== false) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**

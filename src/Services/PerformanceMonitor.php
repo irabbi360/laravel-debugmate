@@ -2,12 +2,13 @@
 
 namespace Irabbi360\LaravelDebugMate\Services;
 
-use Illuminate\Support\Facades\Log;
 use Irabbi360\LaravelDebugMate\Concerns\AsyncDispatch;
 use Irabbi360\LaravelDebugMate\Concerns\CaptureQueryData;
 use Irabbi360\LaravelDebugMate\Concerns\CaptureRequestData;
+use Irabbi360\LaravelDebugMate\Concerns\CaptureSanitization;
 use Irabbi360\LaravelDebugMate\DTO\MetricDataDTO;
 use Irabbi360\LaravelDebugMate\DTO\QueryDataDTO;
+use Irabbi360\LaravelDebugMate\Support\InternalLog;
 use Irabbi360\LaravelDebugMate\Tracing\Span;
 use Irabbi360\LaravelDebugMate\Tracing\Tracer;
 
@@ -19,6 +20,7 @@ class PerformanceMonitor
     use AsyncDispatch;
     use CaptureQueryData;
     use CaptureRequestData;
+    use CaptureSanitization;
 
     protected ApiClient $apiClient;
 
@@ -44,12 +46,9 @@ class PerformanceMonitor
      */
     public function startRequest(?string $traceParentHeader = null): string
     {
-        if ($traceParentHeader) {
-            $fromParent = Tracer::fromTraceParent($traceParentHeader);
-            if ($fromParent) {
-                $this->tracer = $fromParent;
-            }
-        }
+        // Always start from a clean tracer: a previous trace that was never
+        // flushed (e.g. terminate() skipped) must not leak into this one.
+        $this->tracer = ($traceParentHeader ? Tracer::fromTraceParent($traceParentHeader) : null) ?? new Tracer;
 
         $this->rootSpan = $this->tracer->startSpan('http.request', [
             'http.method' => request()->method(),
@@ -68,6 +67,8 @@ class PerformanceMonitor
      */
     public function startJob(string $jobName, string $queue = 'default', string $connection = 'default'): string
     {
+        $this->tracer = new Tracer;
+
         $this->rootSpan = $this->tracer->startSpan('queue.process', [
             'job.class' => $jobName,
             'job.name' => class_basename($jobName),
@@ -110,6 +111,8 @@ class PerformanceMonitor
      */
     public function startCommand(string $commandName): string
     {
+        $this->tracer = new Tracer;
+
         $this->rootSpan = $this->tracer->startSpan('console.process', [
             'command.name' => $commandName,
         ]);
@@ -143,7 +146,9 @@ class PerformanceMonitor
             return;
         }
 
-        $this->rootSpan->end();
+        if (! $this->rootSpan->isEnded()) {
+            $this->rootSpan->end();
+        }
         $this->rootSpan->setAttribute('http.status_code', $statusCode);
 
         $responseThreshold = $this->config['thresholds']['response_time_ms'] ?? 5000;
@@ -200,6 +205,19 @@ class PerformanceMonitor
         $this->rootSpan = null;
         $this->queries = [];
         $this->droppedQueries = 0;
+    }
+
+    /**
+     * Stop the request clock without sending anything yet.
+     *
+     * Lets the middleware record the real response time, then defer the
+     * (network-bound) flush to terminate(), after the response has been sent.
+     */
+    public function finishRequest(): void
+    {
+        if ($this->rootSpan !== null && ! $this->rootSpan->isEnded()) {
+            $this->rootSpan->end();
+        }
     }
 
     /**
@@ -289,9 +307,9 @@ class PerformanceMonitor
         }
 
         $queryDto = QueryDataDTO::from([
-            'sql' => $sql,
+            'sql' => $this->sanitizeQuery($sql),
             'time_ms' => $timeMs,
-            'bindings' => $bindings,
+            'bindings' => $this->sanitizeBindings($bindings),
             'bindings_count' => count($bindings),
             'database' => 'default',
         ]);
@@ -309,9 +327,8 @@ class PerformanceMonitor
         }
 
         $queryDto = QueryDataDTO::from([
-            'sql' => $sql,
+            'sql' => $this->sanitizeQuery($sql),
             'time_ms' => $timeMs,
-            'bindings' => $bindings,
             'bindings_count' => count($bindings),
             'database' => 'default',
         ]);
@@ -449,14 +466,14 @@ class PerformanceMonitor
 
                 return;
             } catch (\Throwable $e) {
-                Log::error('DebugMate: Failed to dispatch metric job', ['error' => $e->getMessage()]);
+                InternalLog::error('DebugMate: Failed to dispatch metric job', ['error' => $e->getMessage()]);
             }
         }
 
         try {
             $this->apiClient->reportMetric($payload);
         } catch (\Throwable $e) {
-            Log::error('DebugMate: Failed to send metric', ['error' => $e->getMessage()]);
+            InternalLog::error('DebugMate: Failed to send metric', ['error' => $e->getMessage()]);
         }
     }
 

@@ -74,7 +74,7 @@ class BotDetector
     /**
      * Detect if current request is from a bot.
      */
-    public function isBot(string $userAgent = null): bool
+    public function isBot(?string $userAgent = null): bool
     {
         if (!($this->config['bot_filtering'] ?? true)) {
             return false;

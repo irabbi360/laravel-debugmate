@@ -3,6 +3,7 @@
 namespace Irabbi360\LaravelDebugMate\Collectors;
 
 use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
+use Irabbi360\LaravelDebugMate\Support\InternalLog;
 
 class JobCollector implements CollectorInterface
 {
@@ -49,7 +50,7 @@ class JobCollector implements CollectorInterface
                     ]);
                     $this->spans[$key] = $span;
                 } catch (\Throwable $e) {
-                    \Log::debug('DebugMate JobCollector: Error in JobProcessing: '.$e->getMessage());
+                    InternalLog::debug('DebugMate JobCollector: Error in JobProcessing: '.$e->getMessage());
                 }
             });
 
@@ -57,7 +58,7 @@ class JobCollector implements CollectorInterface
                 try {
                     $this->finishJob($event->job, 200);
                 } catch (\Throwable $e) {
-                    \Log::debug('DebugMate JobCollector: Error in JobProcessed: '.$e->getMessage());
+                    InternalLog::debug('DebugMate JobCollector: Error in JobProcessed: '.$e->getMessage());
                 }
             });
 
@@ -75,11 +76,11 @@ class JobCollector implements CollectorInterface
 
                     $this->finishJob($event->job, 500);
                 } catch (\Throwable $e) {
-                    \Log::debug('DebugMate JobCollector: Error in JobFailed: '.$e->getMessage());
+                    InternalLog::debug('DebugMate JobCollector: Error in JobFailed: '.$e->getMessage());
                 }
             });
         } catch (\Throwable $e) {
-            \Log::debug('DebugMate JobCollector: Error registering listener: '.$e->getMessage());
+            InternalLog::debug('DebugMate JobCollector: Error registering listener: '.$e->getMessage());
         }
     }
 

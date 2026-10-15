@@ -3,6 +3,7 @@
 namespace Irabbi360\LaravelDebugMate\Collectors;
 
 use Irabbi360\LaravelDebugMate\Services\PerformanceMonitor;
+use Irabbi360\LaravelDebugMate\Support\InternalLog;
 
 /**
  * LivewireCollector - Tracks Livewire component performance.
@@ -40,7 +41,7 @@ class LivewireCollector implements CollectorInterface
             $this->registerMethodCalls();
             $this->registerPropertyUpdates();
         } catch (\Throwable $e) {
-            \Log::debug('DebugMate LivewireCollector: Error registering listeners: ' . $e->getMessage());
+            InternalLog::debug('DebugMate LivewireCollector: Error registering listeners: ' . $e->getMessage());
         }
     }
 
@@ -54,6 +55,10 @@ class LivewireCollector implements CollectorInterface
             if (class_exists('\Livewire\Lifecycle\Mount')) {
                 \Event::listen('livewire:mount', function ($component) {
                     try {
+                        if (! $this->monitor->hasActiveTrace()) {
+                            return;
+                        }
+
                         $componentId = spl_object_hash($component);
                         $span = $this->monitor->startSpan('livewire.component.mount', [
                             'livewire.component_name' => class_basename($component),
@@ -65,7 +70,7 @@ class LivewireCollector implements CollectorInterface
                             'mounted_at' => microtime(true),
                         ];
                     } catch (\Throwable $e) {
-                        \Log::debug('DebugMate LivewireCollector: Error in mount: ' . $e->getMessage());
+                        InternalLog::debug('DebugMate LivewireCollector: Error in mount: ' . $e->getMessage());
                     }
                 });
             }
@@ -74,6 +79,10 @@ class LivewireCollector implements CollectorInterface
             if (class_exists('\Livewire\Lifecycle\Render')) {
                 \Event::listen('livewire:rendering', function ($component) {
                     try {
+                        if (! $this->monitor->hasActiveTrace()) {
+                            return;
+                        }
+
                         $componentId = spl_object_hash($component);
                         $span = $this->monitor->startSpan('livewire.component.render', [
                             'livewire.component_name' => class_basename($component),
@@ -81,7 +90,7 @@ class LivewireCollector implements CollectorInterface
                         ]);
                         $this->componentSpans[$componentId]['render_span'] = $span;
                     } catch (\Throwable $e) {
-                        \Log::debug('DebugMate LivewireCollector: Error in render: ' . $e->getMessage());
+                        InternalLog::debug('DebugMate LivewireCollector: Error in render: ' . $e->getMessage());
                     }
                 });
             }
@@ -90,15 +99,20 @@ class LivewireCollector implements CollectorInterface
             if (class_exists('\Livewire\Lifecycle\Update')) {
                 \Event::listen('livewire:updating', function ($component, $name, $value) {
                     try {
+                        if (! $this->monitor->hasActiveTrace()) {
+                            return;
+                        }
+
                         $componentId = spl_object_hash($component);
                         $span = $this->monitor->startSpan('livewire.component.update', [
                             'livewire.component_name' => class_basename($component),
                             'livewire.property_name' => $name,
-                            'livewire.old_value' => is_scalar($value) ? (string)$value : gettype($value),
+                            // Never record property values: they may be passwords, tokens, PII.
+                            'livewire.value_type' => get_debug_type($value),
                         ]);
                         $this->methodSpans[$componentId . ':' . $name] = $span;
                     } catch (\Throwable $e) {
-                        \Log::debug('DebugMate LivewireCollector: Error in update: ' . $e->getMessage());
+                        InternalLog::debug('DebugMate LivewireCollector: Error in update: ' . $e->getMessage());
                     }
                 });
 
@@ -107,13 +121,13 @@ class LivewireCollector implements CollectorInterface
                         $key = spl_object_hash($component) . ':' . $name;
                         if (isset($this->methodSpans[$key])) {
                             $span = $this->methodSpans[$key];
-                            $span->setAttribute('livewire.new_value', is_scalar($value) ? (string)$value : gettype($value));
+                            $span->setAttribute('livewire.new_value_type', get_debug_type($value));
                             $span->setStatus('OK');
                             $this->monitor->endSpan($span);
                             unset($this->methodSpans[$key]);
                         }
                     } catch (\Throwable $e) {
-                        \Log::debug('DebugMate LivewireCollector: Error in updated: ' . $e->getMessage());
+                        InternalLog::debug('DebugMate LivewireCollector: Error in updated: ' . $e->getMessage());
                     }
                 });
             }
@@ -134,12 +148,12 @@ class LivewireCollector implements CollectorInterface
                             unset($this->componentSpans[$componentId]);
                         }
                     } catch (\Throwable $e) {
-                        \Log::debug('DebugMate LivewireCollector: Error in destroyed: ' . $e->getMessage());
+                        InternalLog::debug('DebugMate LivewireCollector: Error in destroyed: ' . $e->getMessage());
                     }
                 });
             }
         } catch (\Throwable $e) {
-            \Log::debug('DebugMate LivewireCollector: Error registering lifecycle: ' . $e->getMessage());
+            InternalLog::debug('DebugMate LivewireCollector: Error registering lifecycle: ' . $e->getMessage());
         }
     }
 
@@ -155,6 +169,10 @@ class LivewireCollector implements CollectorInterface
                 // Livewire v3 hook system
                 \Livewire\Livewire::hook('component.call', function ($component, $method, $params) {
                     try {
+                        if (! $this->monitor->hasActiveTrace()) {
+                            return;
+                        }
+
                         $componentId = spl_object_hash($component);
                         $span = $this->monitor->startSpan('livewire.method_call', [
                             'livewire.component_name' => class_basename($component),
@@ -163,7 +181,7 @@ class LivewireCollector implements CollectorInterface
                         ]);
                         $this->methodSpans[$componentId . ':' . $method] = $span;
                     } catch (\Throwable $e) {
-                        \Log::debug('DebugMate LivewireCollector: Error in method hook: ' . $e->getMessage());
+                        InternalLog::debug('DebugMate LivewireCollector: Error in method hook: ' . $e->getMessage());
                     }
                 });
 
@@ -177,12 +195,12 @@ class LivewireCollector implements CollectorInterface
                             unset($this->methodSpans[$key]);
                         }
                     } catch (\Throwable $e) {
-                        \Log::debug('DebugMate LivewireCollector: Error in method end hook: ' . $e->getMessage());
+                        InternalLog::debug('DebugMate LivewireCollector: Error in method end hook: ' . $e->getMessage());
                     }
                 });
             }
         } catch (\Throwable $e) {
-            \Log::debug('DebugMate LivewireCollector: Error registering method calls: ' . $e->getMessage());
+            InternalLog::debug('DebugMate LivewireCollector: Error registering method calls: ' . $e->getMessage());
         }
     }
 

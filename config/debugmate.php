@@ -67,9 +67,14 @@ return [
 
     /**
      * Queue configuration for async reporting
+     *
+     * - queue_connection: null uses the app's default queue connection.
+     * - queue_name: put DebugMate jobs on their own queue so a burst of
+     *   reports never delays your application's jobs.
      */
-    'queue' => env('QUEUE_CONNECTION', 'sync'),
     'async_reporting' => env('DEBUGMATE_ASYNC_REPORTING', true),
+    'queue_connection' => env('DEBUGMATE_QUEUE_CONNECTION'),
+    'queue_name' => env('DEBUGMATE_QUEUE', 'default'),
 
     /**
      * Paths to ignore from performance tracking
@@ -167,6 +172,31 @@ return [
     ],
 
     /**
+     * Data privacy
+     *
+     * - redact_query_bindings: replace string query bindings with "***" before
+     *   they leave the app (numbers / booleans / nulls are kept).
+     * - send_user_pii: include the authenticated user's name and email.
+     * - sensitive_keys: extra key fragments to mask (in addition to the
+     *   built-in list of password / token / secret / cookie / ... keys).
+     */
+    'redact_query_bindings' => env('DEBUGMATE_REDACT_QUERY_BINDINGS', true),
+    'send_user_pii' => env('DEBUGMATE_SEND_USER_PII', true),
+    'sensitive_keys' => [
+        // 'national_id',
+    ],
+
+    /**
+     * Source code sent with stack frames
+     *
+     * - application: only for your app's frames (not vendor / node_modules)
+     * - all: every frame (larger payloads; ships vendor source too)
+     * - none: never send source code
+     */
+    'code_snippets' => env('DEBUGMATE_CODE_SNIPPETS', 'application'),
+    'code_snippet_lines' => (int) env('DEBUGMATE_CODE_SNIPPET_LINES', 30),
+
+    /**
      * Exception classes to ignore
      */
     'ignore_exceptions' => [
@@ -247,4 +277,14 @@ return [
      * Enable IP geolocation lookups for visitor location tracking
      */
     'enable_geolocation' => env('DEBUGMATE_ENABLE_GEOLOCATION', false),
+
+    /**
+     * Geolocation lookup endpoint. The (anonymized, when analytics.anonymize_ips
+     * is on) visitor IP is appended to this URL. The default ip-api.com free
+     * tier is HTTP-only and non-commercial - use an HTTPS provider in production.
+     */
+    'geolocation' => [
+        'endpoint' => env('DEBUGMATE_GEOLOCATION_ENDPOINT', 'http://ip-api.com/json/'),
+        'timeout' => (float) env('DEBUGMATE_GEOLOCATION_TIMEOUT', 1),
+    ],
 ];
