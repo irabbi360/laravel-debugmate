@@ -34,11 +34,21 @@ Package auto-registers `TrackPerformance` when `DEBUGMATE_TRACK_PERFORMANCE=true
 
 ### 2. Register exception handler
 
+**Laravel 11, 12, 13** — `bootstrap/app.php`:
+
 ```php
-// bootstrap/app.php
 ->withExceptions(function (Exceptions $exceptions) {
     \Irabbi360\LaravelDebugMate\Services\ExceptionHandler::handles($exceptions);
 })->create();
+```
+
+**Laravel 10** — `app/Exceptions/Handler.php`:
+
+```php
+public function register(): void
+{
+    \Irabbi360\LaravelDebugMate\Services\ExceptionHandler::registerOn($this);
+}
 ```
 
 ### 3. Manual reporting
@@ -125,7 +135,8 @@ php artisan vendor:publish --tag=config --provider="Irabbi360\LaravelDebugMate\D
 
 Key env vars: `DEBUGMATE_ENABLED`, `DEBUGMATE_API_URL`, `DEBUGMATE_PROJECT_KEY`, `DEBUGMATE_TRACK_*`, `DEBUGMATE_ASYNC_REPORTING`.
 
-Supports PHP 8.2+ and Laravel 11, 12 and 13.
+Supports PHP 8.2+ and Laravel 10, 11, 12 and 13 (Laravel 10 on PHP 8.2–8.3).
+Laravel 10 and 11 no longer receive security fixes from Laravel; prefer 12 or 13.
 
 ### Queue
 

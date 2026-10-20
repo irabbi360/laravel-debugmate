@@ -44,6 +44,17 @@ class DebugMate extends Facade
     }
 
     /**
+     * Register DebugMate on an exception handler (Laravel 10, also works on 11+).
+     *
+     * Usage in app/Exceptions/Handler.php register():
+     *     \Irabbi360\LaravelDebugMate\Facades\DebugMate::registerOn($this);
+     */
+    public static function registerOn(\Illuminate\Foundation\Exceptions\Handler $handler): void
+    {
+        ExceptionHandler::registerOn($handler);
+    }
+
+    /**
      * Start timing an operation.
      *
      * Usage:

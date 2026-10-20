@@ -113,9 +113,11 @@
   once per report instead of once per frame.
 - **Queue:** reports go to `queue_name` on `queue_connection` (new). The old
   `queue` key was never read and has been removed.
-- **Laravel 10 support dropped** (end of life; every 10.x release carries
-  security advisories). Supported: Laravel 11, 12, 13 on PHP 8.2+.
-- CI covers PHP 8.2–8.4 × Laravel 11–13 and audits runtime dependencies.
+- **Supported:** Laravel 10, 11, 12 and 13 on PHP 8.2+ (Laravel 10 on PHP
+  8.2–8.3). Laravel 10 apps register error reporting with
+  `ExceptionHandler::registerOn($this)` in `app/Exceptions/Handler.php`, since
+  `withExceptions()` only exists from Laravel 11.
+- CI covers PHP 8.2–8.4 × Laravel 10–13 and audits runtime dependencies.
 
 ### ⚙️ New config
 
