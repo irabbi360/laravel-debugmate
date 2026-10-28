@@ -2,6 +2,32 @@
 
 ## [2.2.0] - Unreleased
 
+### ⚠️ Changed
+
+- **`async_reporting` now defaults to `false`.** Reports are sent directly to the API,
+  so a fresh install works without a queue worker. Set `DEBUGMATE_ASYNC_REPORTING=true`
+  (and run a worker) to report from queued jobs. Apps that published the config keep
+  whatever value their published file has.
+
+### ⚡ Performance
+
+- **Web requests no longer wait on DebugMate.** Without async reporting, reports
+  raised during a request are buffered and sent in one batch to the new
+  `/api/debugmate/batch` endpoint after the response is sent (`app()->terminating()`,
+  with a shutdown-function backstop). A request that logs 10 lines makes one API call,
+  after the visitor already has the page. Older servers without the batch endpoint
+  get the items one by one. New config: `defer_reporting`, `buffer_limit`,
+  `max_batch_size`.
+- **Laravel Octane support.** When Octane is installed, each request / task / tick
+  is buffered separately (per coroutine under Swoole) and flushed on Octane's
+  `RequestTerminated` / `TaskTerminated` / `TickTerminated`, after the response.
+  `laravel/octane` remains optional.
+
+### 🐛 Fixes
+
+- `RequestAnalytics` called a non-existent `InternalInternalLog` class when an
+  analytics send failed.
+
 ### 🐛 Reliability — the SDK can no longer break the host app
 
 - **Exception reporting never throws.** `ErrorTracker::reportError()` and the

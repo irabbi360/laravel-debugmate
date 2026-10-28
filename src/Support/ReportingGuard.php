@@ -52,7 +52,7 @@ class ReportingGuard
     /**
      * Current coroutine id under Swoole / OpenSwoole, otherwise the process.
      */
-    protected static function contextId(): int|string
+    public static function contextId(): int|string
     {
         foreach (['\Swoole\Coroutine', '\OpenSwoole\Coroutine'] as $coroutine) {
             if (class_exists($coroutine) && ($cid = $coroutine::getCid()) > 0) {

@@ -15,6 +15,7 @@ use Irabbi360\LaravelDebugMate\Console\VerifyCommand;
 use Irabbi360\LaravelDebugMate\Http\Middleware\TrackAnalytics;
 use Irabbi360\LaravelDebugMate\Http\Middleware\TrackPerformance;
 use Irabbi360\LaravelDebugMate\Services\ApiClient;
+use Irabbi360\LaravelDebugMate\Support\ReportBuffer;
 use Irabbi360\LaravelDebugMate\Services\BotDetector;
 use Irabbi360\LaravelDebugMate\Services\ContextCollector;
 use Irabbi360\LaravelDebugMate\Services\ErrorTracker;
@@ -141,6 +142,9 @@ class DebugMateServiceProvider extends ServiceProvider
         // Register performance middleware if enabled
         $this->registerPerformanceMiddleware();
 
+        // Sync-mode reports from a web request are batched and sent after the response
+        $this->registerDeferredReporting();
+
         // Errors: register ExceptionHandler::handles() in bootstrap/app.php
         $this->registerLogListener();
         $this->registerPerformanceMonitoring();
@@ -205,6 +209,64 @@ class DebugMateServiceProvider extends ServiceProvider
                 error_log('DebugMate listener error: ' . $e->getMessage());
             }
         });
+    }
+
+    /**
+     * Flush buffered reports once the response is out. The shutdown function is
+     * a backstop for requests that end without terminating (fatal errors, exit).
+     */
+    protected function registerDeferredReporting(): void
+    {
+        ReportBuffer::reset();
+
+        $flush = function () {
+            if (ReportBuffer::count() === 0) {
+                ReportBuffer::drain();
+
+                return;
+            }
+
+            try {
+                $this->app->make(ApiClient::class)->flushDeferred();
+            } catch (\Throwable $e) {
+                error_log('DebugMate flush error: '.$e->getMessage());
+            }
+        };
+
+        $this->app->terminating($flush);
+        register_shutdown_function($flush);
+
+        $this->registerOctaneDeferredReporting($flush);
+    }
+
+    /**
+     * Octane workers run in the console and never reach the shutdown function per
+     * request, so buffer each request / task / tick on its own and flush it when
+     * Octane reports it finished (after the response has been sent). Event names
+     * are strings so laravel/octane stays an optional dependency.
+     */
+    protected function registerOctaneDeferredReporting(\Closure $flush): void
+    {
+        if (! $this->app->bound('octane')) {
+            return;
+        }
+
+        $start = fn () => ReportBuffer::reset(forceDeferral: true);
+
+        $finish = function () use ($flush) {
+            $flush();
+            ReportBuffer::forget();
+        };
+
+        $events = $this->app['events'];
+
+        foreach (['RequestReceived', 'TaskReceived', 'TickReceived'] as $event) {
+            $events->listen("Laravel\\Octane\\Events\\{$event}", $start);
+        }
+
+        foreach (['RequestTerminated', 'TaskTerminated', 'TickTerminated'] as $event) {
+            $events->listen("Laravel\\Octane\\Events\\{$event}", $finish);
+        }
     }
 
     /**

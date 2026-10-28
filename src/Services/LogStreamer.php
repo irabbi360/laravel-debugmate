@@ -115,7 +115,7 @@ class LogStreamer
             'level' => $level,
             'source' => $this->detectSource(),
             'context' => array_merge($this->getDefaultContext(), $context),
-            'timestamp' => now()->format('Y-m-d\TH:i:s\Z'),
+            'timestamp' => now()->utc()->format('Y-m-d\TH:i:s\Z'),
         ];
 
         ReportingGuard::run(function () use ($logData) {
@@ -142,7 +142,7 @@ class LogStreamer
             'message' => $message,
             'level' => $level,
             'context' => $context,
-            'timestamp' => now()->format('Y-m-d\TH:i:s\Z'),
+            'timestamp' => now()->utc()->format('Y-m-d\TH:i:s\Z'),
         ];
     }
 

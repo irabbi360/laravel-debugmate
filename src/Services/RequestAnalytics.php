@@ -345,7 +345,7 @@ class RequestAnalytics
         try {
             $this->apiClient->reportAnalytics($payload);
         } catch (\Throwable $e) {
-            InternalInternalLog::debug('DebugMate: Failed to send analytics', ['type' => $type, 'error' => $e->getMessage()]);
+            InternalLog::debug('DebugMate: Failed to send analytics', ['type' => $type, 'error' => $e->getMessage()]);
         }
     }
 

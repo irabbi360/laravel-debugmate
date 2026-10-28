@@ -53,7 +53,7 @@ class ErrorDataDTO extends BaseDTO
             ip_address: $data['ip_address'] ?? null,
             method: $data['method'] ?? null,
             status_code: $data['status_code'] ?? null,
-            timestamp: $data['timestamp'] ?? now()->format('Y-m-d\TH:i:s\Z'),
+            timestamp: $data['timestamp'] ?? now()->utc()->format('Y-m-d\TH:i:s\Z'),
         );
     }
 

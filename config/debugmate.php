@@ -72,7 +72,20 @@ return [
      * - queue_name: put DebugMate jobs on their own queue so a burst of
      *   reports never delays your application's jobs.
      */
-    'async_reporting' => env('DEBUGMATE_ASYNC_REPORTING', true),
+    'async_reporting' => env('DEBUGMATE_ASYNC_REPORTING', false),
+
+    /**
+     * Without async reporting, reports raised during a web request are held in
+     * memory and sent in one batch after the response has been sent, so the
+     * visitor never waits on DebugMate. Console commands and queue jobs send
+     * immediately.
+     *
+     * - buffer_limit: max reports held per request (extra ones are dropped).
+     * - max_batch_size: max bytes per batch request.
+     */
+    'defer_reporting' => env('DEBUGMATE_DEFER_REPORTING', true),
+    'buffer_limit' => (int) env('DEBUGMATE_BUFFER_LIMIT', 200),
+    'max_batch_size' => (int) env('DEBUGMATE_MAX_BATCH_SIZE', 1048576),
     'queue_connection' => env('DEBUGMATE_QUEUE_CONNECTION'),
     'queue_name' => env('DEBUGMATE_QUEUE', 'default'),
 

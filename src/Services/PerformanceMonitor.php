@@ -198,7 +198,7 @@ class PerformanceMonitor
                 'dropped_spans' => $droppedSpans ?: null,
                 'dropped_queries' => $this->droppedQueries ?: null,
             ], fn ($value) => $value !== null),
-            'timestamp' => now()->format('Y-m-d\TH:i:s\Z'),
+            'timestamp' => now()->utc()->format('Y-m-d\TH:i:s\Z'),
         ]);
 
         $this->reportFromDTO($metricData);

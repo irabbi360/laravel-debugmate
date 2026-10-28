@@ -140,8 +140,15 @@ Laravel 10 and 11 no longer receive security fixes from Laravel; prefer 12 or 13
 
 ### Queue
 
-With `DEBUGMATE_ASYNC_REPORTING=true`, reports are sent from queued jobs. Put them
-on their own queue so a burst of errors never delays your application's jobs:
+By default (`DEBUGMATE_ASYNC_REPORTING=false`) no queue worker is needed and reporting
+never slows your pages down: errors, logs, metrics and analytics raised during a web
+request are held in memory and sent in **one batched call after the response has gone
+to the browser**. This works under PHP-FPM and Laravel Octane (each Octane request,
+task and tick gets its own batch). Console commands and queue jobs send immediately. Tune it with
+`DEBUGMATE_DEFER_REPORTING` (on by default), `DEBUGMATE_BUFFER_LIMIT` (max reports
+held per request, default 200) and `DEBUGMATE_MAX_BATCH_SIZE` (bytes per batch call). Set `DEBUGMATE_ASYNC_REPORTING=true`
+to send them from queued jobs instead. Put them on their own queue so a burst of
+errors never delays your application's jobs:
 
 ```env
 DEBUGMATE_QUEUE=debugmate            # queue name (default: "default")
