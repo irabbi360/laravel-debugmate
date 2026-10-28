@@ -23,8 +23,15 @@
   `RequestTerminated` / `TaskTerminated` / `TickTerminated`, after the response.
   `laravel/octane` remains optional.
 
+### ✨ Added
+
+- **`debugmate:verify` sends a test error** (`DebugMateTestException`) after the
+  connection check and prints the link to the project's Errors page, so a new install
+  can be confirmed in the dashboard. Skip it with `--skip-test-error`.
+
 ### 🐛 Fixes
 
+- `debugmate:verify` never showed the project name (it read `name`; the API returns `title`).
 - `RequestAnalytics` called a non-existent `InternalInternalLog` class when an
   analytics send failed.
 

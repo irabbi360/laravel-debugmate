@@ -108,6 +108,12 @@ php artisan debugmate:register-monitors --sync
 php artisan debugmate:verify
 ```
 
+It checks your configuration and API connection, then sends a test error
+(`DebugMateTestException`) so you can see it arrive in your DebugMate dashboard, and
+prints the link to the project's Errors page. The test error is sent directly, even
+when async reporting or sampling is enabled. Use `--skip-test-error` to only check
+the connection.
+
 ## Auth
 
 SDK sends `X-DebugMate-Key` and `Authorization: Bearer {DEBUGMATE_PROJECT_KEY}` on every request.

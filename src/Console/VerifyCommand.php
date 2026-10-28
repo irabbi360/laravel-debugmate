@@ -4,14 +4,16 @@ namespace Irabbi360\LaravelDebugMate\Console;
 
 use Illuminate\Console\Command;
 use Irabbi360\LaravelDebugMate\Services\ApiClient;
+use Irabbi360\LaravelDebugMate\Services\ErrorTracker;
 
 class VerifyCommand extends Command
 {
-    protected $signature = 'debugmate:verify';
+    protected $signature = 'debugmate:verify
+        {--skip-test-error : Only check the connection; do not send a test error}';
 
     protected $description = 'Verify DebugMate SDK configuration and API connectivity';
 
-    public function handle(ApiClient $apiClient): int
+    public function handle(ApiClient $apiClient, ErrorTracker $errorTracker): int
     {
         if (! config('debugmate.enabled')) {
             $this->components->warn('DebugMate is disabled. Set DEBUGMATE_ENABLED=true to enable tracking.');
@@ -46,13 +48,29 @@ class VerifyCommand extends Command
         $this->components->info('Connection verified.');
 
         $project = $apiClient->getProjectInfo();
+        $project = is_array($project) ? ($project['data'] ?? $project) : [];
+        $name = $project['title'] ?? $project['name'] ?? null;
 
-        if (is_array($project)) {
-            $name = $project['name'] ?? $project['data']['name'] ?? null;
+        if ($name) {
+            $this->components->twoColumnDetail('Project', (string) $name);
+        }
 
-            if ($name) {
-                $this->components->twoColumnDetail('Project', (string) $name);
-            }
+        if ($this->option('skip-test-error')) {
+            return self::SUCCESS;
+        }
+
+        $this->components->info('Sending a test error...');
+
+        if (! $errorTracker->sendTestError()) {
+            $this->components->error('The connection works, but the test error was not accepted. Check storage/logs for the DebugMate API response.');
+
+            return self::FAILURE;
+        }
+
+        $this->components->info('Test error sent. You should see "DebugMateTestException" in your DebugMate dashboard.');
+
+        if (! empty($project['slug'])) {
+            $this->components->twoColumnDetail('Errors', rtrim((string) config('debugmate.api_url'), '/').'/projects/'.$project['slug'].'/errors');
         }
 
         return self::SUCCESS;

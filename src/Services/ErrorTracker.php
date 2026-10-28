@@ -9,6 +9,7 @@ use Irabbi360\LaravelDebugMate\Concerns\CaptureRequestData;
 use Irabbi360\LaravelDebugMate\Concerns\CaptureSanitization;
 use Irabbi360\LaravelDebugMate\Concerns\CaptureStackTrace;
 use Irabbi360\LaravelDebugMate\DTO\ErrorDataDTO;
+use Irabbi360\LaravelDebugMate\Exceptions\DebugMateTestException;
 use Irabbi360\LaravelDebugMate\Support\InternalLog;
 use Irabbi360\LaravelDebugMate\Support\ReportingGuard;
 use Throwable;
@@ -64,6 +65,24 @@ class ErrorTracker
             return;
         }
 
+        $this->reportFromDTO($this->buildErrorData($exception, $context, $traceId));
+    }
+
+    /**
+     * Send a DebugMateTestException straight to the API - no sampling, ignore list,
+     * queue or end-of-request buffer - so the caller learns whether it arrived.
+     */
+    public function sendTestError(): bool
+    {
+        $exception = DebugMateTestException::make();
+
+        return $this->apiClient->reportError(
+            $this->buildErrorData($exception, ['debugmate_test' => true], null)->toArray()
+        );
+    }
+
+    protected function buildErrorData(Throwable $exception, array $context, ?string $traceId): ErrorDataDTO
+    {
         $traceId = $traceId ?? Str::uuid()->toString();
 
         $frames = $this->stackTraceParser->toArray($this->stackTraceParser->parseThrowable($exception));
@@ -83,7 +102,7 @@ class ErrorTracker
             'source' => $this->detectSource(),
         ], $this->requestAttributes()));
 
-        $this->reportFromDTO($errorData);
+        return $errorData;
     }
 
     /**

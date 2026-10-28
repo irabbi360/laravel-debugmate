@@ -99,6 +99,7 @@ return [
         'api/debugmate/*',  // Ignore DebugMate API endpoints
         'debugmate',
         'debugbar',
+        '_debugbar',
     ],
 
     /**
