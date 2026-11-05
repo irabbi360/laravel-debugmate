@@ -27,7 +27,7 @@ return [
      * What to track
      */
     'track_errors' => env('DEBUGMATE_TRACK_ERRORS', true),
-    'track_logs' => env('DEBUGMATE_TRACK_LOGS', false),
+    'track_logs' => env('DEBUGMATE_TRACK_LOGS', true),
     'track_performance' => env('DEBUGMATE_TRACK_PERFORMANCE', false),
     'track_queries' => env('DEBUGMATE_TRACK_QUERIES', true),
     'track_analytics' => env('DEBUGMATE_TRACK_ANALYTICS', false),

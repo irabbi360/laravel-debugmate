@@ -39,7 +39,7 @@ class VerifyCommand extends Command
         $this->components->info('Verifying API connection (POST /api/debugmate/verify-token)...');
 
         if (! $apiClient->verifyConnection()) {
-            $this->components->error('Connection failed. Key reached API but was rejected, or URL is wrong.');
+            $this->components->error('Connection failed. Key reached API but was rejected, or Subscription is inactive.');
             $this->components->error('Check DEBUGMATE_API_URL, DEBUGMATE_PROJECT_KEY, and restart queue workers after .env change.');
 
             return self::FAILURE;
